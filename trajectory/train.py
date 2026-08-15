@@ -140,6 +140,10 @@ def main(uav_num=2, model_subdir="Ours", total_episode=300, seed=None,
 
     model.save(os.path.join(save_dir, "last.pth"))
 
+    # Structured reward history for Task 9 plotting (minimal, non-breaking).
+    np.savez(os.path.join(log_dir, "UAV_%d_%s_rewards.npz" % (uav_num, model_subdir)),
+             ep_rewards=np.asarray(ep_rewards, dtype=np.float64))
+
     arr = np.asarray(ep_rewards, dtype=np.float64)
     nan_count = int(np.isnan(arr).sum())
     log("=== done === best_reward=%.2f avg_last100=%.2f nan_count=%d "
