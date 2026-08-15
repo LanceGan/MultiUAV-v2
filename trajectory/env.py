@@ -61,6 +61,13 @@ Interfaces used by Tasks 7-8::
 ``step`` returns ``rewards`` as a per-UAV list and ``dones`` as a per-UAV list
 of *individual* completion flags; the episode-level terminal flag lives in
 ``info["terminal"]`` (use that for replay bootstrapping in Task 7).
+
+Episode-level metrics are accumulated every step and exposed in ``info`` so the
+rollout / evaluation harness (Task 8) can read them directly: ``energy`` (J),
+``tau_history`` (per-point offload delay τ_k, s), ``times`` (per-UAV completion
+step), ``outage_duration`` (Σ outage·Δt, s), ``offloaded_data`` (Mbit),
+``rate_sum`` / ``rate_steps`` (for the mean uplink rate), and the instantaneous
+per-step ``rate`` / ``outage`` lists.
 """
 
 import math
@@ -199,6 +206,12 @@ class MultiUAVInspectionEnv(object):
         self._buffer_done = [False for _ in range(self.uav_num)]
         self._tau_done = [0.0 for _ in range(self.uav_num)]
         self._energy = [0.0 for _ in range(self.uav_num)]
+        self._offloaded = [0.0 for _ in range(self.uav_num)]
+        self._outage_duration = [0.0 for _ in range(self.uav_num)]
+        self._rate_sum = [0.0 for _ in range(self.uav_num)]
+        self._rate_steps = [0 for _ in range(self.uav_num)]
+        self._rate = [0.0 for _ in range(self.uav_num)]
+        self._outage = [0.0 for _ in range(self.uav_num)]
         self._tau_history = [[] for _ in range(self.uav_num)]
         self._times = [None for _ in range(self.uav_num)]
         self._trajectories = [[(self.UAVs[i].x, self.UAVs[i].y)]
@@ -266,6 +279,7 @@ class MultiUAVInspectionEnv(object):
     def _offload(self, i, dt):
         """Offload one step's worth of data from UAV i's buffer (Mbit)."""
         rate = self._a2g_rate(i)
+        self._rate[i] = rate
         self._data_buffer[i] = max(0.0, self._data_buffer[i] - rate * dt)
         return rate
 
@@ -369,7 +383,11 @@ class MultiUAVInspectionEnv(object):
             reward += self._move(i, v, theta)
 
             # Data offloading at the post-move position.
-            self._offload(i, self.delta_t)
+            prev_buffer = self._data_buffer[i]
+            rate = self._offload(i, self.delta_t)
+            self._offloaded[i] += prev_buffer - self._data_buffer[i]
+            self._rate_sum[i] += rate
+            self._rate_steps[i] += 1
             self._offload_elapsed[i] += self.delta_t
             if not self._buffer_done[i] and self._data_buffer[i] <= 0.0:
                 self._buffer_done[i] = True
@@ -377,6 +395,8 @@ class MultiUAVInspectionEnv(object):
 
             # G2A outage penalty (enabled).
             outage = self._get_g2a_outage(i)
+            self._outage[i] = outage
+            self._outage_duration[i] += outage * self.delta_t
             reward -= self.lambda_out * outage
 
             # Collision penalty (negative term).
@@ -405,5 +425,11 @@ class MultiUAVInspectionEnv(object):
             "energy": list(self._energy),
             "tau_history": [list(t) for t in self._tau_history],
             "times": list(self._times),
+            "outage_duration": list(self._outage_duration),
+            "offloaded_data": list(self._offloaded),
+            "rate_sum": list(self._rate_sum),
+            "rate_steps": list(self._rate_steps),
+            "rate": list(self._rate),
+            "outage": list(self._outage),
         }
         return obs_list, rewards, dones, info
