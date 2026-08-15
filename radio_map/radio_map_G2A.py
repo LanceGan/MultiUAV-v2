@@ -7,7 +7,7 @@ print("Here we go G2A!")
 # 3GPP Rural Macro (RMa) Building Distribution Model
 # ================================
 
-D = 2  # 区域边长 D x D km²
+D = 4  # 区域边长 D x D km²（4km×4km 场景，对齐 config 单位约定：坐标/10 转 km）
 step = 101  # 分辨率为 D / (step-1) km
 
 # ============== 生成山地区域地形（平滑高斯噪声） ==============
