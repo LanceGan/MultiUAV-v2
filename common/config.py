@@ -1,30 +1,56 @@
+"""Scenario configuration (Task 11).
+
+The per-scenario parameters (``user_num`` / ``length`` / ``width`` / ``v_max`` /
+``delta_t`` / ``tau_max`` / ``T_out_max`` / ``lambda_*`` / ``bs_loc`` /
+``ini_loc`` / ``end_loc``) live in ``configs/scenario_uav<N>.json`` so they can
+be edited / re-run without touching code.  ``get_scenario(uav_num)`` loads the
+corresponding JSON and returns the *same* dict interface as before (numpy
+arrays for the three location fields, ``uav_num`` / ``seed`` added from the
+call), so existing callers and tests are unaffected.
+
+``ENERGY_PARAMS`` (rotary-wing power model) and ``get_data_sizes`` (per-point
+offload volumes) remain here in ``common.config``.
+"""
+
+import json
+import os
+
 import numpy as np
 
 ENERGY_PARAMS = dict(P0=79.8563, Pi=88.6279, U_tip=120.0, v0=4.03,
                      d0=0.6, rho=1.225, s=0.05, A=0.503)
 
-# N 架无人机 → 巡检点数 / 场景规模
-SCENARIOS = {
-    2: dict(user_num=20, length=40, width=40),
-    3: dict(user_num=30, length=40, width=40),
-    4: dict(user_num=40, length=40, width=40),
-}
+_CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           os.pardir, "configs")
+
+# Fields serialised as JSON lists but returned as numpy arrays (matching the
+# original hardcoded ``get_scenario`` interface).
+_ARRAY_KEYS = ("bs_loc", "ini_loc", "end_loc")
+
+
+def _load_scenario_json(uav_num):
+    """Load ``configs/scenario_uav<N>.json`` and convert location lists to arrays."""
+    path = os.path.join(_CONFIG_DIR, "scenario_uav%d.json" % int(uav_num))
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    for key in _ARRAY_KEYS:
+        data[key] = np.asarray(data[key], dtype=float)
+    return data
+
 
 def get_scenario(uav_num, seed=42):
-    sc = dict(SCENARIOS[uav_num])
-    sc.update(
-        uav_num=uav_num,
-        v_max=0.5,            # 单位100m/步；对应 20m/s 的量级（沿用单机）
-        delta_t=0.5,          # 秒/步
-        tau_max=80.0,         # 时延 QoS 上限（秒）
-        T_out_max=80.0,       # 中断时长上限（秒）
-        lambda_E=0.001, lambda_out=1.0, lambda_tau=1.0,  # 权重，待灵敏度分析
-        bs_loc=np.array([[9.54,9.12],[29.78,9.78],[9.26,27.56],[26.96,29.78]]),
-        ini_loc=np.array([2.62, 2.65]),
-        end_loc=np.array([18.95, 11.12]),
-        seed=seed,
-    )
+    """Return the scenario configuration dict for ``uav_num`` UAVs.
+
+    Interface is unchanged: keys ``user_num`` / ``length`` / ``width`` /
+    ``v_max`` / ``delta_t`` / ``tau_max`` / ``T_out_max`` / ``lambda_E`` /
+    ``lambda_out`` / ``lambda_tau`` / ``bs_loc`` / ``ini_loc`` / ``end_loc``
+    (numpy arrays) plus ``uav_num`` and ``seed``.
+    """
+    sc = _load_scenario_json(uav_num)
+    sc["uav_num"] = int(uav_num)
+    sc["seed"] = int(seed)
     return sc
+
 
 def get_data_sizes(user_num, seed=42):
     rng = np.random.RandomState(seed)
