@@ -14,3 +14,11 @@ def test_users_files_have_expected_shape():
         pts = np.loadtxt(f"results/datas/Users_{n}.txt")
         assert pts.shape == (n, 3)  # x,y,h
         assert pts[:, :2].min() >= 0 and pts[:, :2].max() <= 40  # 4km×4km，单位100m
+
+def test_radio_map_covers_full_4km_area():
+    # 右上角 (3.5, 3.5) km 必须在 4km×4km 覆盖内：有限 SINR + 中断概率在 [0,1]（无 IndexError）
+    loc = np.array([[3.5, 3.5, 0.1]])
+    sinr = radio_map_A2G.getPointDateRate(loc)
+    outage = radio_map_G2A.getPointMiniOutage(loc)
+    assert np.isfinite(float(sinr))
+    assert 0.0 <= float(outage[0][0]) <= 1.0

@@ -19,7 +19,7 @@ def get_scenario(uav_num, seed=42):
         tau_max=80.0,         # 时延 QoS 上限（秒）
         T_out_max=80.0,       # 中断时长上限（秒）
         lambda_E=0.001, lambda_out=1.0, lambda_tau=1.0,  # 权重，待灵敏度分析
-        bs_loc=np.array([[4.77,4.56],[14.89,4.89],[4.63,13.78],[13.48,14.89]]),
+        bs_loc=np.array([[9.54,9.12],[29.78,9.78],[9.26,27.56],[26.96,29.78]]),
         ini_loc=np.array([2.62, 2.65]),
         end_loc=np.array([18.95, 11.12]),
         seed=seed,
