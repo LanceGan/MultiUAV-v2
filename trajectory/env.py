@@ -26,8 +26,9 @@ Design (faithful to the single-UAV ``World.py`` physics + the multi-UAV spec):
   ``tau = data_buffer/rate`` is in seconds — no 8x factor.** Data of point k is
   loaded when the UAV leaves the previous waypoint (or at ``reset`` for the
   first point) and offloaded while flying toward point k; at arrival, if it is
-  still not fully offloaded and ``tau_k > tau_max``, a ``P_trans`` penalty is
-  applied.
+  still not fully offloaded and its *instantaneous* remaining transmission
+  time ``data_buffer / rate > tau_max`` (rate evaluated at the current
+  position), a ``P_trans`` penalty is applied.
 
 * Energy: each step ``E += rotary_power(v, ENERGY_PARAMS) * delta_t``; reward
   term ``P_energy = lambda_E * rotary_power(v) * delta_t``.
@@ -281,6 +282,23 @@ class MultiUAVInspectionEnv(object):
                 return -P_COLLISION
         return 0.0
 
+    def _trans_penalty(self, i):
+        """Return ``P_trans`` if UAV i's remaining transmission time exceeds
+        ``tau_max``, else 0.0.
+
+        The remaining transmission time is the *instantaneous* quantity
+        ``data_buffer / rate``, evaluated at the UAV's current position via the
+        Shannon rate ``B*log2(1 + 10**(SINR/10))`` with a ``1e-6`` floor to
+        avoid division by zero (and so a tiny-but-nonzero buffer at a near-zero
+        rate is correctly flagged).
+        """
+        if self._data_buffer[i] <= 0.0:
+            return 0.0
+        rate = max(self._a2g_rate(i), 1e-6)
+        if self._data_buffer[i] / rate > self.tau_max:
+            return P_TRANS
+        return 0.0
+
     def _move(self, i, v, theta):
         """Apply the (v, theta) action; cancel + penalise out-of-bounds moves."""
         uav = self.UAVs[i]
@@ -306,10 +324,10 @@ class MultiUAVInspectionEnv(object):
             return 0.0
 
         reward = R_ARRIVE
-        # Delay-QoS: if the previous point's data is still not fully offloaded
-        # after tau_max, apply the P_trans penalty.
-        if self._data_buffer[i] > 0.0 and self._offload_elapsed[i] > self.tau_max:
-            reward -= P_TRANS
+        # Delay-QoS: penalize if the previous point's data is still not fully
+        # offloaded AND its instantaneous remaining transmission time
+        # (data_buffer / rate at the current position) exceeds tau_max.
+        reward -= self._trans_penalty(i)
         tau_k = (self._tau_done[i] if self._buffer_done[i]
                  else self._offload_elapsed[i])
         self._tau_history[i].append(float(tau_k))

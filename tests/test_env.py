@@ -35,6 +35,22 @@ def test_obs_and_action_dim():
     assert env.action_dim == 2
 
 
+def test_trans_penalty_uses_instantaneous_remaining_time(monkeypatch):
+    env = _make_env()
+    env.reset()
+    u = 0
+
+    # (a) large remaining buffer at a low-rate position -> P_trans fires
+    env._data_buffer[u] = 1000.0
+    monkeypatch.setattr(env, "_a2g_rate", lambda i: 1e-8)  # floored to 1e-6
+    assert env._trans_penalty(u) > 0.0  # 1000 / 1e-6 >> tau_max
+
+    # (b) small remaining buffer at a high-rate position -> no P_trans
+    env._data_buffer[u] = 0.001
+    monkeypatch.setattr(env, "_a2g_rate", lambda i: 10.0)  # 0.001 / 10 << tau_max
+    assert env._trans_penalty(u) == 0.0
+
+
 def test_reset_no_initial_collision():
     # UAVs must spawn spread apart (fixed depot offset) so no UAV is within
     # safe_distance*2 of another at reset — i.e. no spurious start collision.
