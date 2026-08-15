@@ -35,6 +35,19 @@ def test_obs_and_action_dim():
     assert env.action_dim == 2
 
 
+def test_reset_no_initial_collision():
+    # UAVs must spawn spread apart (fixed depot offset) so no UAV is within
+    # safe_distance*2 of another at reset — i.e. no spurious start collision.
+    env = _make_env(4)
+    env.reset()
+    for i in range(env.uav_num):
+        for j in range(i + 1, env.uav_num):
+            d = np.linalg.norm([env.UAVs[i].x - env.UAVs[j].x,
+                                env.UAVs[i].y - env.UAVs[j].y])
+            assert d >= env.safe_distance * 2
+        assert env._collision_penalty(i) == 0.0
+
+
 def test_reset_returns_obs_list():
     env = _make_env(3)
     obs = env.reset()

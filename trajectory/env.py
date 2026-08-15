@@ -38,7 +38,8 @@ Design (faithful to the single-UAV ``World.py`` physics + the multi-UAV spec):
 
 * Collision: if the distance to another active UAV is ``< safe_distance*2``
   (``safe_distance = 0.1`` = 10 m in 100 m units by default), a ``P_collision``
-  penalty is applied.
+  penalty is applied. UAVs are spawned at ``ini_loc + [i*depot_spacing, 0]`` so
+  they do not overlap at the depot (``depot_spacing = 0.5`` = 50 m by default).
 
 * Completion: each UAV visits its assigned sequence (injected via
   ``set_uav_traverse``); when every UAV has finished its targets, a team reward
@@ -46,7 +47,7 @@ Design (faithful to the single-UAV ``World.py`` physics + the multi-UAV spec):
 
 Interfaces used by Tasks 7-8::
 
-    MultiUAVInspectionEnv(cfg, safe_distance=0.1)
+    MultiUAVInspectionEnv(cfg, safe_distance=0.1, depot_spacing=0.5)
     reset() -> list[np.ndarray]
     step(actions) -> (obs_list, rewards, dones, info)
     get_obs(i)
@@ -88,7 +89,7 @@ DEFAULT_T = 200             # episode horizon in steps
 
 class MultiUAVInspectionEnv(object):
     def __init__(self, cfg, safe_distance=0.1, points=None, data_sizes=None,
-                 uav_traverse=None, T=None):
+                 uav_traverse=None, T=None, depot_spacing=0.5):
         self.cfg = cfg
         self.uav_num = int(cfg["uav_num"])
         self.user_num = int(cfg["user_num"])
@@ -103,6 +104,7 @@ class MultiUAVInspectionEnv(object):
         self.lambda_tau = float(cfg["lambda_tau"])
 
         self.safe_distance = float(safe_distance)
+        self.depot_spacing = float(depot_spacing)
         self.B = BANDWIDTH
         self.uav_h = DEFAULT_UAV_H
         self.arrive_dist = DEFAULT_ARRIVE_DIST
@@ -177,8 +179,14 @@ class MultiUAVInspectionEnv(object):
     def reset(self):
         self.t = 0
         ini = np.asarray(self.cfg["ini_loc"], dtype=float).reshape(-1)
-        self.UAVs = [UAV(float(ini[0]), float(ini[1]), self.uav_h)
-                     for _ in range(self.uav_num)]
+        # Spread initial positions along +x by a fixed offset so UAVs do not
+        # overlap at the depot (avoid a spurious collision penalty at start).
+        # UAV i is placed at ini_loc + [i * depot_spacing, 0.0].
+        self.UAVs = []
+        for i in range(self.uav_num):
+            x = float(ini[0] + i * self.depot_spacing)
+            y = float(ini[1])
+            self.UAVs.append(UAV(x, y, self.uav_h))
 
         self._traverse = [list(self.uav_traverse.get(i, []))
                           for i in range(self.uav_num)]
