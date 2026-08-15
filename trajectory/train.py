@@ -10,8 +10,10 @@ integration is Task 10): the K points are split into N contiguous chunks and
 ``env.set_uav_traverse``.
 
 Every episode stores each UAV's individual transition into the shared buffer
-using ``info["terminal"]`` (episode-level) as the done flag, and the shared
-networks train on the pooled samples.
+using ``info["terminal"]`` (true completion only) as the replay done flag (a
+horizon timeout bootstraps as done=0), and the shared networks train on the
+pooled samples. The rollout loop stops on
+``info["terminal"] or info["truncated"]``.
 """
 
 import argparse
@@ -105,10 +107,13 @@ def main(uav_num=2, model_subdir="Ours", total_episode=300, seed=None,
                 actions.append(a)
 
             next_obs, rewards, dones, info = env.step(actions)
-            terminal = bool(info["terminal"])
+            # ``done`` for replay bootstrapping = true completion only; a timeout
+            # (truncation) must bootstrap as done=0 so the value is not biased down.
+            done = bool(info["terminal"])
+            episode_done = bool(info["terminal"]) or bool(info["truncated"])
             for i in range(uav_num):
                 replay.add(obs[i], actions[i], rewards[i],
-                           next_obs[i], terminal)
+                           next_obs[i], done)
 
             if len(replay) >= batch_size:
                 model.train(replay)
@@ -118,7 +123,7 @@ def main(uav_num=2, model_subdir="Ours", total_episode=300, seed=None,
             total_steps += 1
             obs = next_obs
 
-            if terminal:
+            if episode_done:
                 success = 0.0 if info["truncated"] else 1.0
                 ep_energy = float(np.sum(info["energy"]))  # cumulative, final
                 break

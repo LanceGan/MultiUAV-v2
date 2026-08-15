@@ -43,7 +43,7 @@ def load_scenario(uav_num, seed=42):
     """Return ``(cfg, points, data_sizes)`` for a UAV count.
 
     ``points`` is ``(K, 2)`` in 100 m units (height column dropped) and
-    ``data_sizes`` is the ``(K,)`` per-point offload volume (MB) from
+    ``data_sizes`` is the ``(K,)`` per-point offload volume (Mbit) from
     ``common.config.get_data_sizes``.
     """
     cfg = get_scenario(uav_num)

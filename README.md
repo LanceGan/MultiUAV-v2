@@ -144,3 +144,7 @@ F:/anaconda3/envs/pytorch/python.exe -m pytest tests/ -v
 
 `get_scenario(uav_num)` 的返回字典接口保持不变（`bs_loc` / `ini_loc` / `end_loc`
 为 numpy 数组，`uav_num` / `seed` 由调用注入），因此既有代码与测试不受影响。
+
+> **注意（权重未调优）**：阶段一的 4D 聚类权重 `W4D=(1.0,0.4,0.4,0.5)` 与
+> `λ_E=0.001, λ_out=λ_τ=1.0` 为**占位/未调优**的硬编码初值，论文写作前须按
+> §6.1/6.2 的端到端目标 + 敏感性分析进行调优。

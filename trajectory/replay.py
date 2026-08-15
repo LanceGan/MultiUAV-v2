@@ -2,8 +2,9 @@
 
 A single buffer pools every UAV's individual transition ``(s, a, r, s', done)``;
 the shared networks train on the pooled samples (parameter sharing). ``done`` is
-the *episode-level* terminal flag (``info["terminal"]``), not a per-UAV flag, so
-target Q bootstrap correctly at the end of an episode.
+the *episode-level* terminal flag (``info["terminal"]``, true completion only —
+not truncation), not a per-UAV flag, so target Q bootstrap correctly at the end
+of a completed episode (and truncated episodes bootstrap with ``done=0``).
 """
 
 import numpy as np

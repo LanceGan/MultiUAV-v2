@@ -2,7 +2,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 from scipy.ndimage import gaussian_filter
-print("Here we go G2A!")
 # ================================
 # 3GPP Rural Macro (RMa) Building Distribution Model
 # ================================

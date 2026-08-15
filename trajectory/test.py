@@ -98,7 +98,7 @@ def rollout(env, model, uav_traverse, min_action=None, max_action=None):
                 rates[i].append(float(info["rate"][i]))
                 outage_steps[i].append(float(info["outage"][i]))
 
-        if info["terminal"]:
+        if info["terminal"] or info["truncated"]:
             break
 
     trajectories = [np.asarray(env._trajectories[i], dtype=np.float64)

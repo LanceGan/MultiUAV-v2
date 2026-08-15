@@ -20,6 +20,12 @@ import numpy as np
 ENERGY_PARAMS = dict(P0=79.8563, Pi=88.6279, U_tip=120.0, v0=4.03,
                      d0=0.6, rho=1.225, s=0.05, A=0.503)
 
+# NOTE (units): scenario ``v_max`` is in 100m-units/s, so ``v_max=0.5`` == 50 m/s
+# physical (the single-UAV paper's 20 m/s would be ``v_max=0.2``). Flag for a
+# future sensitivity analysis — do NOT change ``v_max`` now (would invalidate
+# existing smoke results).
+
+
 _CONFIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            os.pardir, "configs")
 
@@ -53,5 +59,11 @@ def get_scenario(uav_num, seed=42):
 
 
 def get_data_sizes(user_num, seed=42):
+    """Return per-point offload volume in Mbit (uniform 100–300 Mbit).
+
+    Unit convention: data sizes are Mbit, so the offload time is
+    ``tau = data_buffer / rate`` in seconds with no 8x factor (``rate`` is Mbps).
+    Aligned with the single-UAV paper's 100–300 Mbit scale.
+    """
     rng = np.random.RandomState(seed)
-    return rng.uniform(100.0, 300.0, user_num)  # MB，对齐单机论文测试的 100~300MB 量级
+    return rng.uniform(100.0, 300.0, user_num)  # Mbit

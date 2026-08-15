@@ -15,7 +15,13 @@ Figures produced:
 2. Metric comparison (``metrics_<metric>.png``): one grouped bar chart per
    metric (makespan / total_delay / avg_uplink_rate / outage_duration /
    total_energy), comparing methods, grouped by ``uav_num``.
-3. Training reward curves (``training_rewards.png``): reward-vs-episode per
+3. Layer-1 clustering (``assign_clusters.png``): inspection points colored by
+   cluster label, one panel per clustering method x ``uav_num``, read from
+   ``assign_<method>_uav<N>.json``.
+4. Layer-2 sequence comparison (``sequence_comparison.png``): grouped bar chart
+   of the 5 sequence methods on ``comm_cost`` / ``euclidean_length``, read from
+   ``seq_<method>_uav<N>.json``.
+5. Training reward curves (``training_rewards.png``): reward-vs-episode per
    method / ``uav_num``, read from ``*_rewards.npz`` (written by
    ``trajectory/train.py``) with a fallback to parsing the training ``*.log``.
 
@@ -62,6 +68,11 @@ METRIC_LABELS = {
     "outage_duration": "中断时长 (s)",
     "total_energy": "总能耗 (J)",
 }
+
+# Layer-1 clustering methods (rows) and layer-2 sequence methods (bars), in
+# paper order — used to lay out the assign/seq figures consistently.
+ASSIGN_METHOD_ORDER = ("naive", "balanced", "jia", "4d")
+SEQ_METHOD_ORDER = ("ga_euclidean", "pso", "aco", "nn_2opt", "ga_eqtsp")
 
 UNIT_TO_KM = 0.1        # env units are 100 m; 1 unit -> 0.1 km (env._loc_km)
 UAV_H_KM = DEFAULT_UAV_H * UNIT_TO_KM   # hover altitude in km (env default)
@@ -172,7 +183,7 @@ def _load_metrics(logs_dir):
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         stem = os.path.splitext(os.path.basename(path))[0]
-        run_id = data.get("run_id", stem.rstrip(".metrics"))
+        run_id = data.get("run_id", stem.removesuffix(".metrics"))
         runs.append({
             "run_id": run_id,
             "uav_num": int(data.get("uav_num", _parse_uav_num(stem) or 0)),
@@ -227,7 +238,119 @@ def _plot_metrics(runs, figs_dir):
 
 
 # ---------------------------------------------------------------------------
-# 3. Training reward curves.
+# 3. Layer-1 clustering figure (assign_*.json).
+# ---------------------------------------------------------------------------
+def _load_assign(logs_dir):
+    """Load ``assign_<method>_uav<N>.json`` runs that carry per-point labels."""
+    runs = []
+    for path in sorted(glob.glob(os.path.join(logs_dir, "assign_*.json"))):
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if "points" not in data or "labels" not in data:
+            continue
+        runs.append(data)
+    return runs
+
+
+def _plot_clusters(runs, figs_dir):
+    """Scatter each inspection point colored by cluster label (methods x uav_num)."""
+    if not runs:
+        return None
+    methods = [m for m in ASSIGN_METHOD_ORDER
+               if any(r.get("method") == m for r in runs)]
+    uav_nums = sorted({int(r["uav_num"]) for r in runs})
+    fig, axes = plt.subplots(len(methods), len(uav_nums),
+                             figsize=(3.2 * len(uav_nums), 3.0 * len(methods)),
+                             squeeze=False)
+    for mi, method in enumerate(methods):
+        for ci, un in enumerate(uav_nums):
+            ax = axes[mi][ci]
+            run = next((r for r in runs
+                        if r.get("method") == method and int(r["uav_num"]) == un),
+                       None)
+            if run is None:
+                ax.axis("off")
+                continue
+            pts = np.asarray(run["points"], dtype=float) * UNIT_TO_KM
+            labels = np.asarray(run["labels"], dtype=int)
+            for c in np.unique(labels):
+                ax.scatter(pts[labels == c, 0], pts[labels == c, 1],
+                           s=12, label="cluster %d" % c)
+            ax.set_title("%s (UAV %d)" % (method, un), fontsize=10)
+            ax.set_xlabel("x (km)")
+            ax.set_ylabel("y (km)")
+            ax.legend(fontsize=6)
+            ax.grid(alpha=0.3)
+    fig.tight_layout()
+    out = os.path.join(figs_dir, "assign_clusters.png")
+    fig.savefig(out, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 4. Layer-2 sequence figure (seq_*.json).
+# ---------------------------------------------------------------------------
+def _load_seq(logs_dir):
+    """Load ``seq_<method>_uav<N>.json`` runs."""
+    runs = []
+    for path in sorted(glob.glob(os.path.join(logs_dir, "seq_*.json"))):
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        runs.append(data)
+    return runs
+
+
+def _plot_sequence(runs, figs_dir):
+    """Grouped bar chart of the 5 sequence methods on comm_cost / euclidean_length.
+
+    Each panel plots the per-``uav_num`` totals (``total_comm_cost`` /
+    ``total_euclidean_length``) for the five methods side by side.
+    """
+    if not runs:
+        return None
+    methods = [m for m in SEQ_METHOD_ORDER
+               if any(r.get("method") == m for r in runs)]
+    uav_nums = sorted({int(r["uav_num"]) for r in runs})
+    n_bars = len(uav_nums)
+    width = 0.8 / max(n_bars, 1)
+    color_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+
+    panels = (("comm_cost", "total_comm_cost", "通信代价"),
+              ("euclidean_length", "total_euclidean_length", "欧氏路径长度 (100m)"))
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    for ax, (_key, field, label) in zip(axes, panels):
+        x = np.arange(len(methods))
+        for bi, un in enumerate(uav_nums):
+            values = []
+            for m in methods:
+                vals = [float(r[field]) for r in runs
+                        if r.get("method") == m and int(r["uav_num"]) == un
+                        and field in r]
+                values.append(float(np.mean(vals)) if vals else float("nan"))
+            bars = ax.bar(x + (bi - (n_bars - 1) / 2.0) * width, values, width,
+                          label="UAV %d" % un,
+                          color=color_cycle[bi % len(color_cycle)])
+            for bar, v in zip(bars, values):
+                if np.isfinite(v):
+                    ax.text(bar.get_x() + bar.get_width() / 2.0, v,
+                            "%.3g" % v, ha="center", va="bottom", fontsize=8)
+        ax.set_xticks(x)
+        ax.set_xticklabels(methods, rotation=20, ha="right", fontsize=8)
+        ax.set_ylabel(label)
+        ax.set_title(label)
+        ax.grid(alpha=0.3, axis="y")
+        if n_bars > 1:
+            ax.legend()
+    fig.tight_layout()
+    out = os.path.join(figs_dir, "sequence_comparison.png")
+    fig.savefig(out, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 5. Training reward curves.
 # ---------------------------------------------------------------------------
 def _load_rewards(logs_dir):
     """Collect reward histories keyed by ``(uav_num, method)``.
@@ -314,7 +437,17 @@ def plot_all(logs_dir="results/logs", figs_dir="results/figs"):
     # 2. Metric comparison bar charts.
     generated.extend(_plot_metrics(_load_metrics(logs_dir), figs_dir))
 
-    # 3. Training reward curves.
+    # 3. Layer-1 clustering figure (points colored by cluster label).
+    cluster_out = _plot_clusters(_load_assign(logs_dir), figs_dir)
+    if cluster_out:
+        generated.append(cluster_out)
+
+    # 4. Layer-2 sequence comparison figure (comm_cost / euclidean_length).
+    seq_out = _plot_sequence(_load_seq(logs_dir), figs_dir)
+    if seq_out:
+        generated.append(seq_out)
+
+    # 5. Training reward curves.
     reward_out = _plot_rewards(_load_rewards(logs_dir), figs_dir)
     if reward_out:
         generated.append(reward_out)

@@ -78,6 +78,11 @@ def run(uav_nums=(2, 3, 4), seed=42, log_dir=None):
                 "uav_num": uav_num,
                 "method": method,
                 "seed": seed,
+                # Per-point cluster labels (and coordinates) so the layer-1
+                # clustering figure in plots/plot_results.py can color points by
+                # cluster. Coordinates are in 100m units (as loaded).
+                "points": [[float(x), float(y)] for x, y in points],
+                "labels": [int(l) for l in labels],
             }
             result.update(cluster_metrics(labels, points, data_sizes,
                                           g2a, a2g, uav_num))

@@ -8,13 +8,19 @@ For N in {2, 3, 4} compares the *all-baseline* pipeline against the
 * **all-proposed** = 4D comm-aware clustering + comm-aware ga_eqtsp sequence +
   comm-aware TD3 trajectory.
 
+The all-proposed leg is identical to ``run_traj``'s ``Proposed`` pipeline, so it
+*reuses* that already-trained checkpoint (``--model_subdir``, default
+``Proposed``) instead of retraining a duplicate TD3 — run
+``experiment/run_traj.py`` first.  This keeps the bar chart from showing two
+different-valued bars for the same algorithm.
+
 Writes ``results/logs/end2end_<baseline|proposed>_uav<N>.json`` (plus the
-plot-compatible ``UAV_<N>_<AllBaseline|AllProposed>`` artifacts).
+plot-compatible ``UAV_<N>_<AllBaseline|Proposed>`` artifacts).
 
 CLI::
 
-    python experiment/run_end2end.py --uav_nums 2 --total_episode 200   # smoke
-    python experiment/run_end2end.py                                     # full grid
+    python experiment/run_end2end.py --uav_nums 2   # smoke (needs run_traj first)
+    python experiment/run_end2end.py                # full grid
 """
 
 import argparse
@@ -41,7 +47,11 @@ def build_traverse(uav_num, seed, cluster_method, seq_fn):
 
 
 def run(uav_nums=(2, 3, 4), seed=42, total_episode=300,
-        model_subdir="AllProposed", log_dir=None):
+        model_subdir="Proposed", log_dir=None):
+    # ``total_episode`` is retained for CLI / run_all compatibility only: the
+    # all-proposed leg now REUSES run_traj's ``Proposed`` checkpoint (same 4D +
+    # ga_eqtsp assignment) instead of retraining an identical TD3.
+    _ = total_episode
     log_dir = log_dir or _common.LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
     results = []
@@ -59,12 +69,11 @@ def run(uav_nums=(2, 3, 4), seed=42, total_episode=300,
             log_dir=log_dir)
         results.append(base_metrics)
 
-        # --- all-proposed: 4d + ga_eqtsp + TD3 ---
+        # --- all-proposed: 4d + ga_eqtsp + TD3 (reuse run_traj's model) ---
         cfg_prop, traverse_prop = build_traverse(
             uav_num, seed, "4d", ga_eqtsp.ga_eqtsp)
-        model = _traj.train_td3(
-            cfg_prop, traverse_prop, total_episode=total_episode,
-            model_subdir=model_subdir, log_dir=log_dir)
+        model = _traj.load_td3(cfg_prop, traverse_prop,
+                               model_subdir=model_subdir)
         prop_metrics = _traj.rollout_evaluate(
             cfg_prop, traverse_prop, model,
             pipeline_run_id="UAV_%d_%s" % (uav_num, model_subdir),
@@ -82,8 +91,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Full-pipeline end-to-end comparison.")
     parser.add_argument("--uav_nums", type=str, default="2,3,4")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--total_episode", type=int, default=300)
-    parser.add_argument("--model_subdir", type=str, default="AllProposed")
+    parser.add_argument("--total_episode", type=int, default=300,
+                        help="retained for run_all compatibility (unused: model is reused)")
+    parser.add_argument("--model_subdir", type=str, default="Proposed",
+                        help="name of the run_traj checkpoint to reuse")
     parser.add_argument("--log_dir", type=str, default=None)
     args = parser.parse_args(argv)
     uav_nums = tuple(int(x) for x in args.uav_nums.split(",") if x.strip())

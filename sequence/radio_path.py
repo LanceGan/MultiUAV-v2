@@ -35,7 +35,7 @@ def edge_cost(i_xy, j_xy, data_size, cfg):
 
     Args:
         i_xy, j_xy: np.array([x, y])，单位 100m。
-        data_size: 该边需卸载的数据量（MB）。
+        data_size: 该边需卸载的数据量（Mbit）。
         cfg: ``common.config.get_scenario`` 返回的场景配置字典。
 
     Returns:
@@ -56,8 +56,10 @@ def edge_cost(i_xy, j_xy, data_size, cfg):
     # 欧氏距离（100m 单位）
     d_ij = float(np.linalg.norm(j_xy - i_xy))
 
-    # 遍历能耗（参考速度 = v_max）
-    E_ij = edge_energy(d_ij, v_max, ENERGY_PARAMS)
+    # 遍历能耗（参考速度 = v_max）。d_ij 与 v_max 均为 100m 单位；旋转翼功率
+    # 模型常量（U_tip=120 m/s、v0=4.03 m/s）为 SI，故须将 d、v 同时 ×100 转 SI
+    # （m、m/s）。v is in 100m-units/s; convert to m/s via ×100（v_max=0.5 → 50 m/s）。
+    E_ij = edge_energy(d_ij * 100.0, v_max * 100.0, ENERGY_PARAMS)
 
     # 沿直线等步长采样（每段中点）
     if d_ij < 1e-12:

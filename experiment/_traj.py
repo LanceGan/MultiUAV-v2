@@ -109,9 +109,12 @@ def train_td3(cfg, uav_traverse, total_episode=300, model_subdir="Proposed",
                 actions.append(np.clip(a + noise, min_action, max_action))
 
             next_obs, rewards, dones, info = env.step(actions)
-            terminal = bool(info["terminal"])
+            # ``done`` for replay bootstrapping = true completion only; a timeout
+            # (truncation) must bootstrap as done=0 so the value is not biased down.
+            done = bool(info["terminal"])
+            episode_done = bool(info["terminal"]) or bool(info["truncated"])
             for i in range(uav_num):
-                replay.add(obs[i], actions[i], rewards[i], next_obs[i], terminal)
+                replay.add(obs[i], actions[i], rewards[i], next_obs[i], done)
 
             if len(replay) >= batch_size:
                 model.train(replay)
@@ -119,7 +122,7 @@ def train_td3(cfg, uav_traverse, total_episode=300, model_subdir="Proposed",
             ep_reward += float(np.sum(rewards))
             steps += 1
             obs = next_obs
-            if terminal:
+            if episode_done:
                 break
 
         ep_rewards.append(ep_reward)
@@ -139,6 +142,31 @@ def train_td3(cfg, uav_traverse, total_episode=300, model_subdir="Proposed",
     log("=== done === best_reward=%.2f avg_last100=%.2f nan_count=%d"
         % (best_reward, float(np.mean(arr[-100:])), int(np.isnan(arr).sum())))
     log_file.close()
+    return model
+
+
+def load_td3(cfg, uav_traverse, model_subdir="Proposed", model_dir=None,
+             model_episode="best"):
+    """Load a previously-trained TD3 checkpoint instead of retraining.
+
+    Used by ``run_end2end`` to reuse the layer-3 ``Proposed`` model produced by
+    ``run_traj`` (same 4D clustering + ga_eqtsp assignment) rather than training
+    an identical network a second time.
+    """
+    model_dir = model_dir or _common.MODEL_DIR
+    uav_num = int(cfg["uav_num"])
+    env = _make_env(cfg, uav_traverse)
+    max_action = np.array([float(cfg["v_max"]), 2.0 * np.pi], dtype=np.float32)
+    min_action = np.array([0.0, 0.0], dtype=np.float32)
+    model = SharedTD3(env.local_obs_dim, env.action_dim, max_action, min_action)
+    ckpt = traj_test.resolve_model_path(
+        os.path.join(model_dir, "UAV_%d" % uav_num, model_subdir), model_episode)
+    if not os.path.exists(ckpt):
+        raise FileNotFoundError(
+            "reuse of '%s' checkpoint requested but not found: %s "
+            "(run experiment/run_traj.py first)" % (model_subdir, ckpt))
+    model.load(ckpt)
+    print("reused checkpoint -> %s" % ckpt)
     return model
 
 

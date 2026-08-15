@@ -30,8 +30,10 @@ Design (faithful to the single-UAV ``World.py`` physics + the multi-UAV spec):
   time ``data_buffer / rate > tau_max`` (rate evaluated at the current
   position), a ``P_trans`` penalty is applied.
 
-* Energy: each step ``E += rotary_power(v, ENERGY_PARAMS) * delta_t``; reward
-  term ``P_energy = lambda_E * rotary_power(v) * delta_t``.
+* Energy: each step ``E += rotary_power(v*100, ENERGY_PARAMS) * delta_t`` (the
+  action speed ``v`` is in 100m-units/s; it is converted to m/s via ×100 before
+  entering the SI rotary-wing power model); reward term
+  ``P_energy = lambda_E * rotary_power(v*100) * delta_t``.
 
 * G2A outage: each step ``outage = getPointMiniOutage(...)``; reward term
   ``P_out = lambda_out * outage`` (enabled — the single-UAV code had this
@@ -59,8 +61,11 @@ Interfaces used by Tasks 7-8::
     set_uav_traverse(dict)
 
 ``step`` returns ``rewards`` as a per-UAV list and ``dones`` as a per-UAV list
-of *individual* completion flags; the episode-level terminal flag lives in
-``info["terminal"]`` (use that for replay bootstrapping in Task 7).
+of *individual* completion flags.  ``info["terminal"]`` is the true task-
+completion flag (all UAVs finished); ``info["truncated"]`` flags a horizon
+timeout (``T`` reached without all UAVs finishing).  Use ``info["terminal"]``
+for replay bootstrapping (Task 7) and ``info["terminal"] or info["truncated"]``
+to stop a rollout loop.
 
 Episode-level metrics are accumulated every step and exposed in ``info`` so the
 rollout / evaluation harness (Task 8) can read them directly: ``energy`` (J),
@@ -375,7 +380,10 @@ class MultiUAVInspectionEnv(object):
             theta = float(actions[i, 1])
 
             # Energy (reward penalty) + accumulate for metrics.
-            energy = rotary_power(v, ENERGY_PARAMS) * self.delta_t
+            # v is in 100m-units/s; convert to m/s via ×100 so the SI rotary-wing
+            # power model (U_tip=120 m/s, v0=4.03 m/s) sees SI velocity.
+            v_mps = v * 100.0
+            energy = rotary_power(v_mps, ENERGY_PARAMS) * self.delta_t
             self._energy[i] += energy
             reward = -self.lambda_E * energy
 
@@ -413,13 +421,12 @@ class MultiUAVInspectionEnv(object):
         if terminal:
             for i in range(self.uav_num):
                 rewards[i] += R_COMPLETE
-        episode_done = terminal or truncated
 
         obs_list = [self.get_obs(i) for i in range(self.uav_num)]
         dones = [bool(self._done[i]) for i in range(self.uav_num)]
         info = {
-            "terminal": bool(episode_done),
-            "truncated": bool(truncated),
+            "terminal": bool(terminal),   # true task completion only
+            "truncated": bool(truncated),  # horizon reached without completion
             "done": list(self._done),
             "t": self.t,
             "energy": list(self._energy),
