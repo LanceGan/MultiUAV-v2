@@ -19,6 +19,15 @@ def test_metrics_makespan_is_max_of_uav_times():
     m = metrics.compute_metrics(traj, times, data_sizes={0: [], 1: []})
     assert m["makespan"] == 150
 
+def test_edge_energy_zero_length_is_zero():
+    # d=0 的边（重复相邻点 / 悬停 / 结束）能耗应为 0，而非 NaN
+    assert metrics.edge_energy(0.0, 10.0, ENERGY_PARAMS) == 0.0
+    assert metrics.edge_energy(0.0, 0.0, ENERGY_PARAMS) == 0.0
+    traj = {0: np.array([[1.0, 1.0], [1.0, 1.0]])}
+    m = metrics.compute_metrics(traj, {0: 2}, data_sizes={0: []})
+    assert np.isfinite(m["total_energy"])
+    assert m["total_energy"] == 0.0
+
 def test_get_data_sizes_shape_and_range():
     sizes = config.get_data_sizes(20, seed=42)
     assert len(sizes) == 20

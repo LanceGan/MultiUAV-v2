@@ -10,6 +10,8 @@ def rotary_power(v, p):
             + 0.5*d0*rho*s*A*v**3)
 
 def edge_energy(d, v, p=ENERGY_PARAMS):
+    if d < 1e-9:
+        return 0.0
     return rotary_power(v, p) * (d / v)
 
 def compute_metrics(trajectories, times, data_sizes, energy_params=ENERGY_PARAMS):
