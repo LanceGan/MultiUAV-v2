@@ -131,7 +131,7 @@ def save_log(path, log, uav_num, cfg):
     data = {
         "uav_num": np.asarray(uav_num, dtype=np.int64),
         "delta_t": np.asarray(float(cfg["delta_t"]), dtype=np.float64),
-        "T": np.asarray(int(cfg.get("T", 200)), dtype=np.int64),
+        "T": np.asarray(int(cfg.get("T", 1000)), dtype=np.int64),
         "times": log["times"],
         "energies": log["energies"],
         "outage_duration": log["outage_duration"],

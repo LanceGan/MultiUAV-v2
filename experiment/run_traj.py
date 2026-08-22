@@ -63,9 +63,11 @@ def run(uav_nums=(2, 3, 4), seed=42, total_episode=2000,
         results.append(base_metrics)
 
         # --- Proposed: comm-aware TD3 ---
-        model = _traj.train_td3(
+        _traj.train_td3(
             cfg, traverse, total_episode=total_episode,
             model_subdir=model_subdir, log_dir=log_dir)
+        # Load the BEST checkpoint (not the possibly-degraded final model).
+        model = _traj.load_td3(cfg, traverse, model_subdir=model_subdir)
         prop_metrics = _traj.rollout_evaluate(
             cfg, traverse, model,
             pipeline_run_id="UAV_%d_%s" % (uav_num, model_subdir),
