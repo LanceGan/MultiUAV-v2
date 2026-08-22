@@ -105,10 +105,14 @@ class SharedTD3(object):
                       else _to_tensor(min_action))
         self.max_action = max_action
         self.min_action = min_action
-        action_range = max_action - min_action
 
-        self.policy_noise = policy_noise_scale * action_range
-        self.noise_clip = noise_clip_scale * action_range
+        # Per-dimension target-policy smoothing scale. The angle is smoothed in
+        # RADIANS (0.5 rad ~ 29 deg), not by its full 2*pi action span, which
+        # otherwise injects an enormous angular perturbation into the target Q.
+        smooth_scale = torch.tensor([float(max_action[0]), 0.5],
+                                    dtype=torch.float32, device=device)
+        self.policy_noise = policy_noise_scale * smooth_scale
+        self.noise_clip = noise_clip_scale * smooth_scale
 
         self.actor = Actor(state_dim, action_dim, net_width,
                            max_action, min_action).to(device)

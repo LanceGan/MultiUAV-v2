@@ -67,7 +67,9 @@ def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
     action_dim = env.action_dim
     max_action = np.array([float(cfg["v_max"]), 2.0 * np.pi], dtype=np.float32)
     min_action = np.array([0.0, 0.0], dtype=np.float32)
-    action_range = max_action - min_action
+    # Per-dimension exploration noise scale: v in [0, v_max], theta in radians
+    # (NOT scaled by 2*pi, which made the angle noise ~108 deg and untunable).
+    noise_scale = np.array([float(cfg["v_max"]), 1.0], dtype=np.float32)
 
     model = SharedTD3(state_dim, action_dim, max_action, min_action)
     replay = ReplayBuffer(state_dim, action_dim, max_size=int(2e5))
@@ -105,7 +107,7 @@ def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
             for i in range(uav_num):
                 a = model.select_action(obs[i])
                 noise = np.random.normal(0.0, 1.0, size=action_dim) \
-                    * (expl_scale * action_range)
+                    * (expl_scale * noise_scale)
                 actions.append(np.clip(a + noise, min_action, max_action))
 
             next_obs, rewards, dones, info = env.step(actions)
