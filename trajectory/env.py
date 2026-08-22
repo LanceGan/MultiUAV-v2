@@ -91,7 +91,7 @@ from radio_map.entity import UAV
 R_ARRIVE = 400.0            # reaching an assigned target point (single-UAV scale)
 R_COMPLETE = 1000.0         # team reward when all UAVs finish all targets
 P_TRANS = 10.0              # per-point delay-QoS violation (tau_k > tau_max)
-P_COLLISION = 10.0          # flying within safe_distance*2 of another UAV
+P_COLLISION = 2.0           # max collision penalty (soft, proportional — a flat -10 dominated the reward)
 P_OUT_OF_BOUNDS = 1.0       # per-unit overshoot when leaving the region
 
 BANDWIDTH = 1.0             # A2G bandwidth (Mbps); spec B = 1.0
@@ -289,8 +289,9 @@ class MultiUAVInspectionEnv(object):
         return rate
 
     def _collision_penalty(self, i):
-        """Return a negative reward term if UAV i is too close to another
-        active UAV, otherwise 0.0."""
+        """Return a soft negative reward if UAV i is too close to another active
+        UAV, proportional to the proximity (max ``-P_COLLISION`` at zero
+        separation, tapering to 0 at ``2*safe_distance``)."""
         uav = self.UAVs[i]
         for j in range(self.uav_num):
             if j == i or self._done[j]:
@@ -298,7 +299,8 @@ class MultiUAVInspectionEnv(object):
             other = self.UAVs[j]
             d = math.hypot(uav.x - other.x, uav.y - other.y)
             if d < self.safe_distance * 2.0:
-                return -P_COLLISION
+                severity = min((self.safe_distance * 2.0 - d) / self.safe_distance, 1.0)
+                return -P_COLLISION * severity
         return 0.0
 
     def _trans_penalty(self, i):
