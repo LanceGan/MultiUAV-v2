@@ -43,7 +43,7 @@ def fixed_traverse(uav_num, seed):
     return cfg, points, data_sizes, _common.build_traverse(clusters, orders)
 
 
-def run(uav_nums=(2, 3, 4), seed=42, total_episode=300,
+def run(uav_nums=(2, 3, 4), seed=42, total_episode=2000,
         model_subdir="Proposed", log_dir=None):
     log_dir = log_dir or _common.LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
@@ -83,7 +83,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Layer-3 trajectory comparison.")
     parser.add_argument("--uav_nums", type=str, default="2,3,4")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--total_episode", type=int, default=300)
+    parser.add_argument("--total_episode", type=int, default=2000)
     parser.add_argument("--model_subdir", type=str, default="Proposed")
     parser.add_argument("--log_dir", type=str, default=None)
     args = parser.parse_args(argv)

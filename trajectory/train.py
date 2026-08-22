@@ -39,7 +39,7 @@ def balanced_traverse(uav_num, n_points):
             for i in range(uav_num)}
 
 
-def main(uav_num=2, model_subdir="Ours", total_episode=300, seed=None,
+def main(uav_num=2, model_subdir="Ours", total_episode=2000, seed=None,
          model_dir="results/models", log_dir="results/logs"):
     cfg = get_scenario(uav_num)
     if seed is not None:
@@ -164,7 +164,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Train parameter-shared independent TD3 (Task 7).")
     parser.add_argument("--uav_num", type=int, default=2)
-    parser.add_argument("--total_episode", type=int, default=300)
+    parser.add_argument("--total_episode", type=int, default=2000)
     parser.add_argument("--model_subdir", type=str, default="Ours")
     parser.add_argument("--seed", type=int, default=None)
     args = parser.parse_args()

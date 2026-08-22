@@ -48,7 +48,7 @@ def _make_env(cfg, uav_traverse):
     return env
 
 
-def train_td3(cfg, uav_traverse, total_episode=300, model_subdir="Proposed",
+def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
               model_dir=None, log_dir=None, log_every=10):
     """Train parameter-shared independent TD3 on the injected traverse.
 

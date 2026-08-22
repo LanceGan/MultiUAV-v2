@@ -97,7 +97,7 @@ P_OUT_OF_BOUNDS = 5.0       # attempting to leave the region
 BANDWIDTH = 1.0             # A2G bandwidth (Mbps); spec B = 1.0
 DEFAULT_UAV_H = 1.0         # 100 m altitude in 100 m units (-> 0.1 km for map)
 DEFAULT_ARRIVE_DIST = 0.5   # arrival radius in 100 m units (50 m, single-UAV)
-DEFAULT_T = 200             # episode horizon in steps
+DEFAULT_T = 1000            # episode horizon in steps (aligned with single-UAV T=1000; 200 was a smoke value)
 
 
 class MultiUAVInspectionEnv(object):
