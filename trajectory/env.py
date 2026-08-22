@@ -88,11 +88,11 @@ from radio_map.entity import UAV
 # ---------------------------------------------------------------------------
 # Reward / penalty magnitudes (positive constants; penalties are subtracted).
 # ---------------------------------------------------------------------------
-R_ARRIVE = 100.0            # reaching an assigned target point
-R_COMPLETE = 200.0          # team reward when all UAVs finish all targets
+R_ARRIVE = 400.0            # reaching an assigned target point (single-UAV scale)
+R_COMPLETE = 1000.0         # team reward when all UAVs finish all targets
 P_TRANS = 10.0              # per-point delay-QoS violation (tau_k > tau_max)
 P_COLLISION = 10.0          # flying within safe_distance*2 of another UAV
-P_OUT_OF_BOUNDS = 5.0       # attempting to leave the region
+P_OUT_OF_BOUNDS = 1.0       # per-unit overshoot when leaving the region
 
 BANDWIDTH = 1.0             # A2G bandwidth (Mbps); spec B = 1.0
 DEFAULT_UAV_H = 1.0         # 100 m altitude in 100 m units (-> 0.1 km for map)
@@ -319,17 +319,36 @@ class MultiUAVInspectionEnv(object):
         return 0.0
 
     def _move(self, i, v, theta):
-        """Apply the (v, theta) action; cancel + penalise out-of-bounds moves."""
+        """Apply the (v, theta) action, clipping the position to the region.
+
+        A UAV that would leave ``[0, length] x [0, width]`` slides along the
+        wall (its position is clipped to the boundary) instead of freezing in
+        place and stacking a fixed ``-P_OUT_OF_BOUNDS`` penalty every step.
+        The returned penalty is small and proportional to the distance actually
+        overshot past the boundary.
+        """
         uav = self.UAVs[i]
         prev_x, prev_y = uav.x, uav.y
         new_x = prev_x + v * math.cos(theta) * self.delta_t
         new_y = prev_y + v * math.sin(theta) * self.delta_t
-        if (new_x < 0.0 or new_x > self.length
-                or new_y < 0.0 or new_y > self.width):
-            uav.x, uav.y = prev_x, prev_y
-            return -P_OUT_OF_BOUNDS
-        uav.x, uav.y = new_x, new_y
+
+        clip_x = min(max(new_x, 0.0), self.length)
+        clip_y = min(max(new_y, 0.0), self.width)
+        overshoot = math.hypot(new_x - clip_x, new_y - clip_y)
+
+        uav.x, uav.y = clip_x, clip_y
+        if overshoot > 0.0:
+            return -P_OUT_OF_BOUNDS * overshoot
         return 0.0
+
+    def _active_target(self, i):
+        """Return ``(tx, ty)`` of UAV i's current target, or ``None`` if it has
+        no active target (finished, or no points assigned)."""
+        k = self._current_target[i]
+        if self._done[i] or k >= len(self._traverse[i]):
+            return None
+        t = self.points[self._traverse[i][k]]
+        return (float(t[0]), float(t[1]))
 
     def _check_arrival(self, i):
         """Assess arrival at the current target; advance sequence on success."""
@@ -387,8 +406,27 @@ class MultiUAVInspectionEnv(object):
             self._energy[i] += energy
             reward = -self.lambda_E * energy
 
-            # Movement (out-of-bounds -> cancel + penalty).
+            # Capture the pre-move distance to the current target so we can
+            # issue a dense forward-progress reward (single-UAV style) that
+            # gives TD3 a gradient toward the target every step.
+            pre_x, pre_y = self.UAVs[i].x, self.UAVs[i].y
+            target_pt = self._active_target(i)
+            dist_pre = (math.hypot(pre_x - target_pt[0], pre_y - target_pt[1])
+                        if target_pt is not None else None)
+
+            # Movement (out-of-bounds -> clip to boundary + small penalty).
             reward += self._move(i, v, theta)
+
+            if dist_pre is not None:
+                uav = self.UAVs[i]
+                dist_cur = math.hypot(uav.x - target_pt[0], uav.y - target_pt[1])
+                progress = max(0.0, dist_pre - dist_cur)
+                reward += 100.0 * progress
+                # Stay penalty: discourage hovering in place while a target is
+                # still active.
+                move_dist = math.hypot(uav.x - pre_x, uav.y - pre_y)
+                if move_dist < 0.01:
+                    reward -= 2.0
 
             # Data offloading at the post-move position.
             prev_buffer = self._data_buffer[i]

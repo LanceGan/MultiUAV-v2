@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 
 from trajectory.env import MultiUAVInspectionEnv
@@ -91,3 +93,37 @@ def test_empty_traverse_terminates_immediately():
     env.reset()
     obs, rewards, dones, info = env.step([[0.0, 0.0], [0.0, 0.0]])
     assert info["terminal"] is True
+
+
+def test_dense_progress_reward_positive_toward_target():
+    """The reward must carry a dense progress gradient toward the target.
+
+    A step *toward* the current target yields a positive reward (the +100 *
+    progress term dominates the small energy/outage penalties); a step *away*
+    yields a strictly lower reward (progress term is 0).  Deterministic: fixed
+    seed/positions and a known target.
+    """
+    env = _make_env(2)
+    env.set_uav_traverse({0: [0], 1: []})
+    env.reset()
+    env.points[0] = np.array([10.0, 10.0])  # known target for UAV 0
+
+    def _setup():
+        env.reset()
+        env.points[0] = np.array([10.0, 10.0])
+        # Park the (finished) UAV 1 far away so there is no collision penalty.
+        env.UAVs[1].x, env.UAVs[1].y = 30.0, 30.0
+        # Place UAV 0 at a known position, far from its target.
+        env.UAVs[0].x, env.UAVs[0].y = 0.0, 0.0
+
+    theta_toward = math.atan2(10.0, 10.0)  # heading straight at the target
+    theta_away = theta_toward + math.pi    # heading directly away
+
+    _setup()
+    _, r_toward, _, _ = env.step([[env.v_max, theta_toward], [0.0, 0.0]])
+
+    _setup()
+    _, r_away, _, _ = env.step([[env.v_max, theta_away], [0.0, 0.0]])
+
+    assert r_toward[0] > 0.0, f"toward reward should be positive, got {r_toward[0]}"
+    assert r_away[0] < r_toward[0], f"away reward ({r_away[0]}) should be < toward ({r_toward[0]})"
