@@ -93,6 +93,7 @@ R_COMPLETE = 1000.0         # team reward when all UAVs finish all targets
 P_TRANS = 10.0              # per-point delay-QoS violation (tau_k > tau_max)
 P_COLLISION = 2.0           # max collision penalty (soft, proportional — a flat -10 dominated the reward)
 P_OUT_OF_BOUNDS = 1.0       # per-unit overshoot when leaving the region
+TIME_PENALTY = 0.5          # per-step time cost (encourages faster completion -> min makespan)
 
 BANDWIDTH = 1.0             # A2G bandwidth (Mbps); spec B = 1.0
 DEFAULT_UAV_H = 1.0         # 100 m altitude in 100 m units (-> 0.1 km for map)
@@ -406,7 +407,7 @@ class MultiUAVInspectionEnv(object):
             v_mps = v * 100.0
             energy = rotary_power(v_mps, ENERGY_PARAMS) * self.delta_t
             self._energy[i] += energy
-            reward = -self.lambda_E * energy
+            reward = -self.lambda_E * energy - TIME_PENALTY
 
             # Capture the pre-move distance to the current target so we can
             # issue a dense forward-progress reward (single-UAV style) that
