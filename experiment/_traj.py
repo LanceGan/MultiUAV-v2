@@ -48,6 +48,22 @@ def _make_env(cfg, uav_traverse):
     return env
 
 
+def _deterministic_reward(env, model, uav_traverse, uav_num, min_action, max_action):
+    """Deterministic rollout reward (no exploration noise) — used to select the
+    best checkpoint so the saved policy is not noise-dependent."""
+    env.set_uav_traverse(uav_traverse)
+    obs = env.reset()
+    total = 0.0
+    while True:
+        actions = [np.clip(model.select_action(obs[i]), min_action, max_action)
+                   for i in range(uav_num)]
+        obs, rewards, dones, info = env.step(np.asarray(actions, dtype=float))
+        total += float(np.sum(rewards))
+        if info["terminal"] or info["truncated"]:
+            break
+    return total
+
+
 def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
               model_dir=None, log_dir=None, log_every=10):
     """Train parameter-shared independent TD3 on the injected traverse.
@@ -83,6 +99,8 @@ def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
     expl_start, expl_end = 0.3, 0.02
     expl_decay = (expl_end / expl_start) ** (1.0 / max(int(total_episode), 1))
     best_reward = -float("inf")
+    best_det_reward = -float("inf")
+    eval_interval = 50
     ep_rewards = []
 
     log_file = open(log_path, "w", encoding="utf-8")
@@ -130,7 +148,17 @@ def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
         ep_rewards.append(ep_reward)
         if ep_reward > best_reward:
             best_reward = ep_reward
-            model.save(os.path.join(save_dir, "best.pth"))
+        # Select the BEST checkpoint by a DETERMINISTIC rollout (no noise), not
+        # by the noisy training reward — a policy can be noise-dependent and
+        # fail when the exploration noise is removed.
+        if (ep + 1) % eval_interval == 0 or ep == 0:
+            det_reward = _deterministic_reward(
+                env, model, uav_traverse, uav_num, min_action, max_action)
+            if det_reward > best_det_reward:
+                best_det_reward = det_reward
+                model.save(os.path.join(save_dir, "best.pth"))
+                log("  [eval] ep %4d | det_reward %10.2f (new best)"
+                    % (ep + 1, det_reward))
 
         if (ep + 1) % log_every == 0 or ep == 0:
             log("ep %4d | reward %10.2f | avg100 %10.2f | steps %3d | expl %.3f"
