@@ -232,9 +232,15 @@ def getReceivedPower_RicianAndRayleighFastFading(PointLoc, BS, LoS):
     LargeScale = getLargeScalePowerFromBS(PointLoc, BS, Theta_deg, Phi_deg,
                                           LoS)  # large-scale received power based on path loss
 
-    # the random component, which is Rayleigh fading
+    # the random component, which is Rayleigh fading.
+    # Deterministic: seed a LOCAL RNG from the (rounded) point + BS coordinates so
+    # the fast fading is a FIXED function of location, independent of the caller's
+    # global RNG state (reproducible pre-constructed radio map).
+    _seed = int(abs(hash((round(float(PointLoc[0]), 3), round(float(PointLoc[1]), 3),
+                          round(float(BS[0]), 3), round(float(BS[1]), 3)))) % (2 ** 31))
+    _rng = np.random.RandomState(_seed)
     RayleighComponent = np.sqrt(0.5) * (
-                np.random.randn(FastFadingSampleSize, 3) + 1j * np.random.randn(FastFadingSampleSize, 3))  # (1000,3)
+                _rng.randn(FastFadingSampleSize, 3) + 1j * _rng.randn(FastFadingSampleSize, 3))  # (1000,3)
     # print("瑞丽数组大小",RayleighComponent.shape)
 
     if LoS:  # LoS, fast fading is given by Rician fading with K factor 15 dB
