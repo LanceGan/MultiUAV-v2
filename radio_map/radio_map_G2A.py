@@ -301,8 +301,11 @@ def checkLoS(PointLoc, BS):
         # print("LoS")
         return True
 
-def getPointDateRate(loc_vec):  # 输入：n个坐标点的坐标，nx3矩阵，返回：每个点的中断率1x201数组
+def getPointDateRate(loc_vec):  # 单点查询：返回该点的最大 SINR(dB) 标量（多行会丢数据，故拒绝多行）
     numLoc = len(loc_vec)  # numLoc = n
+    if numLoc != 1:
+        raise ValueError(
+            "getPointDateRate 只支持单点输入 (shape (1,3))，收到 %d 个点；请逐点查询" % numLoc)
     Out_vec = []
     Out_SINR_vec = []
     
