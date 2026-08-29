@@ -424,13 +424,42 @@ class MultiUAVInspectionEnv(object):
             if dist_pre is not None:
                 uav = self.UAVs[i]
                 dist_cur = math.hypot(uav.x - target_pt[0], uav.y - target_pt[1])
-                progress = max(0.0, dist_pre - dist_cur)
-                reward += 60.0 * progress
-                # Stay penalty: discourage hovering in place while a target is
-                # still active.
-                move_dist = math.hypot(uav.x - pre_x, uav.y - pre_y)
-                if move_dist < 0.01:
-                    reward -= 2.0
+                raw_progress = dist_pre - dist_cur  # >0 靠近, <0 远离
+
+                # --- 稠密塑形（借鉴旧方案验证过的奖励，保证稳定完成飞行任务） ---
+                # 归一化进度奖励
+                dist_max = self.v_max * self.delta_t
+                reward += 24.0 * (raw_progress / max(dist_max, 1e-8))
+                # 势能差塑形：全程平滑指向目标的梯度
+                reward += 35.0 * (1.0 / (dist_cur + 1.0) - 1.0 / (dist_pre + 1.0))
+
+                move_vec = np.array([uav.x - pre_x, uav.y - pre_y])
+                move_norm = float(np.linalg.norm(move_vec))
+                dir_to_target = np.array([target_pt[0] - pre_x, target_pt[1] - pre_y])
+                dir_norm = float(np.linalg.norm(dir_to_target))
+                if move_norm > 1e-8 and dir_norm > 1e-8:
+                    forward = float(np.clip(
+                        np.dot(move_vec, dir_to_target) / (move_norm * dir_norm), -1.0, 1.0))
+                    reward += 4.0 * forward
+                    # 目标附近惩罚切向绕圈
+                    if dist_pre < 4.0:
+                        close_factor = (4.0 - dist_pre) / 4.0
+                        tangential_ratio = math.sqrt(max(0.0, 1.0 - forward ** 2))
+                        reward -= 6.0 * close_factor * tangential_ratio
+
+                # 目标附近：惩罚无推进/过冲，奖励最终收敛
+                if dist_pre < 4.0:
+                    close_factor = (4.0 - dist_pre) / 4.0
+                    if raw_progress < 0.0:
+                        reward -= 8.0 * close_factor
+                    elif raw_progress < 0.02:
+                        reward -= 2.5 * close_factor
+                    if dist_pre < 2.0:
+                        step_ratio = min(move_norm / max(dist_max, 1e-8), 1.0)
+                        reward -= 3.0 * ((2.0 - dist_pre) / 2.0) * step_ratio
+                    reward += 8.0 * max(0.0, 1.5 - dist_cur) / 1.5
+                elif move_norm < 1e-3:
+                    reward -= 0.5
 
             # Data offloading at the post-move position.
             prev_buffer = self._data_buffer[i]
