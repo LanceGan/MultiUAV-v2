@@ -29,7 +29,7 @@ LOG_DIR = os.path.join(ROOT, "results", "logs")
 MODEL_DIR = os.path.join(ROOT, "results", "models")
 
 # 4D feature weights (spatial, g2a, a2g, vol) — same convention as the tests.
-W4D = (1.0, 0.4, 0.4, 0.5)
+W4D = (1.0, 1.0, 1.0, 0.5)
 # Coordinate scale + UAV height for radio-map queries: env coords are 100 m
 # units, radio maps are km (divide by 10), UAV flies at 100 m (0.1 km).
 POINT_SCALE = 0.1

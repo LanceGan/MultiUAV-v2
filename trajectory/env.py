@@ -93,7 +93,7 @@ R_COMPLETE = 1000.0         # team reward when all UAVs finish all targets
 P_TRANS = 10.0              # per-point delay-QoS violation (tau_k > tau_max)
 P_COLLISION = 2.0           # max collision penalty (soft, proportional — a flat -10 dominated the reward)
 P_OUT_OF_BOUNDS = 1.0       # per-unit overshoot when leaving the region
-TIME_PENALTY = 0.5          # per-step time cost (encourages faster completion -> min makespan)
+TIME_PENALTY = 2.0          # per-step time cost (encourages faster completion -> min makespan)
 
 BANDWIDTH = 1.0             # A2G bandwidth (Mbps); spec B = 1.0
 DEFAULT_UAV_H = 1.0         # 100 m altitude in 100 m units (-> 0.1 km for map)
@@ -424,7 +424,7 @@ class MultiUAVInspectionEnv(object):
                 uav = self.UAVs[i]
                 dist_cur = math.hypot(uav.x - target_pt[0], uav.y - target_pt[1])
                 progress = max(0.0, dist_pre - dist_cur)
-                reward += 100.0 * progress
+                reward += 20.0 * progress
                 # Stay penalty: discourage hovering in place while a target is
                 # still active.
                 move_dist = math.hypot(uav.x - pre_x, uav.y - pre_y)

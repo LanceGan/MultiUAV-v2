@@ -93,8 +93,11 @@ def edge_cost(i_xy, j_xy, data_size, cfg):
     # 除零保护：可卸载数据量下限
     C_ij = max(C_ij, C_FLOOR)
 
-    # 传输时延
-    tau_ij = data_size / C_ij
+    # 传输时延（秒）= 数据量(Mbit) / 平均速率(Mbps)，平均速率 = C_ij / 飞行时间。
+    # 注意：C_ij 是沿边的「累计可卸载数据量」(Mbit)，除以飞行时间才是速率；直接
+    # data_size/C_ij 会得到无量纲比值（单位 bug），故须乘飞行时间。
+    flight_time = d_ij / v_max
+    tau_ij = data_size * flight_time / C_ij
 
     cost = (d_ij / v_max
             + lam_E * E_ij
