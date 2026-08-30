@@ -1,11 +1,12 @@
 """Layer-3 rollout harness (Task 8).
 
-Loads a trained parameter-shared independent TD3 checkpoint, runs a single
-*deterministic* rollout (no exploration noise — pure policy) on the multi-UAV
-environment, records every UAV's trajectory / per-step data buffer / uplink
-rate / G2A outage, and saves the raw log plus the episode-level metrics to
-``results/logs/<run_id>.npz``. The companion ``experiment/evaluate.py`` turns
-that raw log into the five real end-to-end metrics.
+Loads trained per-agent independent TD3 checkpoints (one ``SharedTD3`` per UAV),
+runs a single *deterministic* rollout (no exploration noise — pure policy) on
+the multi-UAV environment, records every UAV's trajectory / per-step data
+buffer / uplink rate / G2A outage, and saves the raw log plus the episode-level
+metrics to ``results/logs/<run_id>.npz``. The companion
+``experiment/evaluate.py`` turns that raw log into the five real end-to-end
+metrics.
 
 CLI::
 
@@ -56,8 +57,28 @@ def resolve_model_path(model_dir, model_episode):
     return os.path.join(model_dir, fname)
 
 
-def rollout(env, model, uav_traverse, min_action=None, max_action=None):
+def resolve_agent_model_path(model_dir, model_episode, i):
+    """Map a ``--model_episode`` label to agent ``i``'s per-agent checkpoint.
+
+    ``best`` -> best_agent<i>.pth, ``final``/``last`` -> last_agent<i>.pth,
+    anything else -> a literal filename (verbatim, no agent index appended).
+    """
+    name = (model_episode or "best").strip()
+    if name == "best":
+        fname = "best_agent%d.pth" % i
+    elif name in ("final", "last"):
+        fname = "last_agent%d.pth" % i
+    else:
+        fname = name if name.endswith(".pth") else name + ".pth"
+    return os.path.join(model_dir, fname)
+
+
+def rollout(env, models, uav_traverse, min_action=None, max_action=None):
     """Run one deterministic rollout and return the recorded log dict.
+
+    ``models`` is either a single stateless policy used by all UAVs (greedy
+    baseline) or a per-UAV LIST of policies (independent agents), so UAV ``i``
+    acts from ``models[i]``.
 
     Returns a dict with (per-UAV lists/arrays): ``trajectories`` (N, 2) per UAV,
     ``times`` (completion step, -1 if unfinished), ``data_buffers`` (Mbit),
@@ -66,6 +87,7 @@ def rollout(env, model, uav_traverse, min_action=None, max_action=None):
     ``offloaded_data``, ``rate_sum``, ``rate_steps``.
     """
     uav_num = env.uav_num
+    models_is_list = isinstance(models, (list, tuple))
     if min_action is None:
         min_action = np.zeros(env.action_dim, dtype=np.float32)
     if max_action is None:
@@ -86,7 +108,8 @@ def rollout(env, model, uav_traverse, min_action=None, max_action=None):
 
         actions = []
         for i in range(uav_num):
-            a = model.select_action(obs[i])          # pure policy, no noise
+            m = models[i] if models_is_list else models
+            a = m.select_action(obs[i])          # pure policy, no noise
             a = np.clip(a, min_action, max_action)
             actions.append(a)
 
@@ -167,20 +190,22 @@ def main(uav_num=2, model_subdir="Ours", model_episode="best", run_id=None,
     max_action = np.array([float(cfg["v_max"]), 2.0 * np.pi], dtype=np.float32)
     min_action = np.array([0.0, 0.0], dtype=np.float32)
 
-    model = SharedTD3(state_dim, action_dim, max_action, min_action)
-    ckpt = resolve_model_path(
-        os.path.join(model_dir, "UAV_%d" % uav_num, model_subdir),
-        model_episode)
-    if not os.path.exists(ckpt):
-        raise FileNotFoundError("model checkpoint not found: %s" % ckpt)
-    model.load(ckpt)
-    print("loaded checkpoint -> %s" % ckpt)
+    save_dir = os.path.join(model_dir, "UAV_%d" % uav_num, model_subdir)
+    models = []
+    for i in range(uav_num):
+        m = SharedTD3(state_dim, action_dim, max_action, min_action)
+        ckpt = resolve_agent_model_path(save_dir, model_episode, i)
+        if not os.path.exists(ckpt):
+            raise FileNotFoundError("model checkpoint not found: %s" % ckpt)
+        m.load(ckpt)
+        models.append(m)
+    print("loaded %d checkpoint(s) -> %s" % (uav_num, save_dir))
 
     if run_id is None:
         run_id = "UAV_%d_%s_%s" % (uav_num, model_subdir, model_episode)
     os.makedirs(log_dir, exist_ok=True)
 
-    log = rollout(env, model, traverse,
+    log = rollout(env, models, traverse,
                   min_action=min_action, max_action=max_action)
 
     npz_path = os.path.join(log_dir, "%s.npz" % run_id)

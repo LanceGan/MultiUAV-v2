@@ -1,4 +1,4 @@
-"""Layer-3 parameter-shared independent TD3 training loop (Task 7).
+"""Layer-3 per-agent independent TD3 training loop (Task 7).
 
 CLI::
 
@@ -9,10 +9,11 @@ integration is Task 10): the K points are split into N contiguous chunks and
 ``uav_traverse = {i: list(range(i*K//N, (i+1)*K//N))}`` is injected via
 ``env.set_uav_traverse``.
 
-Every episode stores each UAV's individual transition into the shared buffer
-using ``info["terminal"]`` (true completion only) as the replay done flag (a
-horizon timeout bootstraps as done=0), and the shared networks train on the
-pooled samples. The rollout loop stops on
+Each UAV owns its own ``SharedTD3`` (actor + twin critic) and its own replay
+buffer, trained only on its own transitions (independent learners — no
+parameter sharing, no centralized critic). Every episode stores each UAV's
+transition using ``info["terminal"]`` (true completion only) as the replay done
+flag (a horizon timeout bootstraps as done=0). The rollout loop stops on
 ``info["terminal"] or info["truncated"]``.
 """
 
@@ -60,9 +61,11 @@ def main(uav_num=2, model_subdir="Ours", total_episode=2000, seed=None,
     n_points = int(env.points.shape[0])
     env.set_uav_traverse(balanced_traverse(uav_num, n_points))
 
-    model = SharedTD3(state_dim, action_dim, max_action, min_action)
-    replay = ReplayBuffer(state_dim, action_dim, max_size=int(2e5))
-    batch_size = model.batch_size
+    agents = [SharedTD3(state_dim, action_dim, max_action, min_action)
+              for _ in range(uav_num)]
+    replays = [ReplayBuffer(state_dim, action_dim, max_size=int(2e5))
+               for _ in range(uav_num)]
+    batch_size = agents[0].batch_size
 
     save_dir = os.path.join(model_dir, "UAV_%d" % uav_num, model_subdir)
     os.makedirs(save_dir, exist_ok=True)
@@ -85,7 +88,7 @@ def main(uav_num=2, model_subdir="Ours", total_episode=2000, seed=None,
         log_file.write(msg + "\n")
         log_file.flush()
 
-    log("=== Task 7 parameter-shared independent TD3 training ===")
+    log("=== Task 7 per-agent independent TD3 training ===")
     log("uav_num=%d total_episode=%d model_subdir=%s seed=%d"
         % (uav_num, total_episode, model_subdir, cfg["seed"]))
     log("state_dim=%d action_dim=%d n_points=%d T=%d"
@@ -102,7 +105,7 @@ def main(uav_num=2, model_subdir="Ours", total_episode=2000, seed=None,
         while True:
             actions = []
             for i in range(uav_num):
-                a = model.select_action(obs[i])
+                a = agents[i].select_action(obs[i])
                 noise = np.random.normal(0.0, 1.0, size=action_dim) \
                     * (expl_scale * noise_scale)
                 a = np.clip(a + noise, min_action, max_action)
@@ -114,11 +117,12 @@ def main(uav_num=2, model_subdir="Ours", total_episode=2000, seed=None,
             done = bool(info["terminal"])
             episode_done = bool(info["terminal"]) or bool(info["truncated"])
             for i in range(uav_num):
-                replay.add(obs[i], actions[i], rewards[i],
-                           next_obs[i], done)
+                # Each UAV stores + trains on its OWN replay only.
+                replays[i].add(obs[i], actions[i], rewards[i],
+                               next_obs[i], done)
 
-            if len(replay) >= batch_size:
-                model.train(replay)
+                if len(replays[i]) >= batch_size:
+                    agents[i].train(replays[i])
 
             ep_reward += float(np.sum(rewards))
             steps += 1
@@ -133,10 +137,13 @@ def main(uav_num=2, model_subdir="Ours", total_episode=2000, seed=None,
         ep_rewards.append(ep_reward)
         if ep_reward > best_reward:
             best_reward = ep_reward
-            model.save(os.path.join(save_dir, "best.pth"))
+            for i in range(uav_num):
+                agents[i].save(os.path.join(save_dir, "best_agent%d.pth" % i))
 
         if (ep + 1) % 50 == 0:
-            model.save(os.path.join(save_dir, "checkpoint_ep%d.pth" % (ep + 1)))
+            for i in range(uav_num):
+                agents[i].save(os.path.join(
+                    save_dir, "checkpoint_ep%d_agent%d.pth" % (ep + 1, i)))
 
         if (ep + 1) % 10 == 0 or ep == 0:
             avg100 = float(np.mean(ep_rewards[-100:]))
@@ -145,7 +152,8 @@ def main(uav_num=2, model_subdir="Ours", total_episode=2000, seed=None,
                 % (ep + 1, ep_reward, avg100, success, ep_energy, steps,
                    expl_scale))
 
-    model.save(os.path.join(save_dir, "last.pth"))
+    for i in range(uav_num):
+        agents[i].save(os.path.join(save_dir, "last_agent%d.pth" % i))
 
     # Structured reward history for Task 9 plotting (minimal, non-breaking).
     np.savez(os.path.join(log_dir, "UAV_%d_%s_rewards.npz" % (uav_num, model_subdir)),
