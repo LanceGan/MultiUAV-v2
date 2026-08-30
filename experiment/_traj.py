@@ -48,18 +48,14 @@ def _make_env(cfg, uav_traverse):
     return env
 
 
-def _deterministic_reward(env, agents, uav_traverse, uav_num, min_action, max_action):
+def _deterministic_reward(env, model, uav_traverse, uav_num, min_action, max_action):
     """Deterministic rollout reward (no exploration noise) — used to select the
-    best checkpoint so the saved policy is not noise-dependent.
-
-    ``agents`` is a per-UAV list of ``SharedTD3`` policies: UAV ``i`` acts from
-    ``agents[i]`` (independent learners — no parameter sharing).
-    """
+    best checkpoint so the saved policy is not noise-dependent."""
     env.set_uav_traverse(uav_traverse)
     obs = env.reset()
     total = 0.0
     while True:
-        actions = [np.clip(agents[i].select_action(obs[i]), min_action, max_action)
+        actions = [np.clip(model.select_action(obs[i]), min_action, max_action)
                    for i in range(uav_num)]
         obs, rewards, dones, info = env.step(np.asarray(actions, dtype=float))
         total += float(np.sum(rewards))
@@ -70,16 +66,10 @@ def _deterministic_reward(env, agents, uav_traverse, uav_num, min_action, max_ac
 
 def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
               model_dir=None, log_dir=None, log_every=10):
-    """Train per-agent independent TD3 (IL MARL) on the injected traverse.
-
-    Each UAV owns its own ``SharedTD3`` (actor + twin critic) and its own replay
-    buffer, trained only on its own transitions — no parameter sharing, no
-    centralized critic.  This fixes the "one UAV finishes, the other doesn't"
-    failure: a single shared policy cannot simultaneously learn two UAVs'
-    different 4D-clustered target sequences.
+    """Train parameter-shared independent TD3 on the injected traverse.
 
     Mirrors ``trajectory/train.py`` but *replaces* the smoke ``balanced_traverse``
-    with the real clustered + sequenced assignment.  Returns the list of agents.
+    with the real clustered + sequenced assignment.  Returns the trained model.
     """
     model_dir = model_dir or _common.MODEL_DIR
     log_dir = log_dir or _common.LOG_DIR
@@ -97,12 +87,9 @@ def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
     # (NOT scaled by 2*pi, which made the angle noise ~108 deg and untunable).
     noise_scale = np.array([float(cfg["v_max"]), 1.0], dtype=np.float32)
 
-    # Per-agent independent learners: one actor + twin critic + replay per UAV.
-    agents = [SharedTD3(state_dim, action_dim, max_action, min_action)
-              for _ in range(uav_num)]
-    replays = [ReplayBuffer(state_dim, action_dim, max_size=int(2e5))
-               for _ in range(uav_num)]
-    batch_size = agents[0].batch_size
+    model = SharedTD3(state_dim, action_dim, max_action, min_action)
+    replay = ReplayBuffer(state_dim, action_dim, max_size=int(2e5))
+    batch_size = model.batch_size
 
     save_dir = os.path.join(model_dir, "UAV_%d" % uav_num, model_subdir)
     os.makedirs(save_dir, exist_ok=True)
@@ -123,8 +110,8 @@ def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
         log_file.write(msg + "\n")
         log_file.flush()
 
-    log("=== Task 10 %s per-agent independent TD3 training "
-        "(injected 4D+ga_eqtsp traverse) ===" % model_subdir)
+    log("=== Task 10 %s TD3 training (injected 4D+ga_eqtsp traverse) ==="
+        % model_subdir)
     log("uav_num=%d total_episode=%d seed=%d state_dim=%d action_dim=%d T=%d"
         % (uav_num, total_episode, seed, state_dim, action_dim, env.T))
 
@@ -136,7 +123,7 @@ def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
         while True:
             actions = []
             for i in range(uav_num):
-                a = agents[i].select_action(obs[i])
+                a = model.select_action(obs[i])
                 noise = np.random.normal(0.0, 1.0, size=action_dim) \
                     * (expl_scale * noise_scale)
                 actions.append(np.clip(a + noise, min_action, max_action))
@@ -147,12 +134,10 @@ def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
             done = bool(info["terminal"])
             episode_done = bool(info["terminal"]) or bool(info["truncated"])
             for i in range(uav_num):
-                # Each UAV stores + trains on its OWN replay only (independent
-                # learners — no pooled transitions, no shared critic).
-                replays[i].add(obs[i], actions[i], rewards[i], next_obs[i], done)
+                replay.add(obs[i], actions[i], rewards[i], next_obs[i], done)
 
-                if len(replays[i]) >= batch_size:
-                    agents[i].train(replays[i])
+            if len(replay) >= batch_size:
+                model.train(replay)
 
             ep_reward += float(np.sum(rewards))
             steps += 1
@@ -165,15 +150,13 @@ def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
             best_reward = ep_reward
         # Select the BEST checkpoint by a DETERMINISTIC rollout (no noise), not
         # by the noisy training reward — a policy can be noise-dependent and
-        # fail when the exploration noise is removed.  The deterministic reward
-        # is the SUM over all UAVs, evaluated with each UAV's own agent.
+        # fail when the exploration noise is removed.
         if (ep + 1) % eval_interval == 0 or ep == 0:
             det_reward = _deterministic_reward(
-                env, agents, uav_traverse, uav_num, min_action, max_action)
+                env, model, uav_traverse, uav_num, min_action, max_action)
             if det_reward > best_det_reward:
                 best_det_reward = det_reward
-                for i in range(uav_num):
-                    agents[i].save(os.path.join(save_dir, "best_agent%d.pth" % i))
+                model.save(os.path.join(save_dir, "best.pth"))
                 log("  [eval] ep %4d | det_reward %10.2f (new best)"
                     % (ep + 1, det_reward))
 
@@ -182,56 +165,44 @@ def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
                 % (ep + 1, ep_reward, float(np.mean(ep_rewards[-100:])),
                    steps, expl_scale))
 
-    for i in range(uav_num):
-        agents[i].save(os.path.join(save_dir, "last_agent%d.pth" % i))
+    model.save(os.path.join(save_dir, "last.pth"))
     np.savez(os.path.join(log_dir, "UAV_%d_%s_rewards.npz" % (uav_num, model_subdir)),
              ep_rewards=np.asarray(ep_rewards, dtype=np.float64))
     arr = np.asarray(ep_rewards, dtype=np.float64)
     log("=== done === best_reward=%.2f avg_last100=%.2f nan_count=%d"
         % (best_reward, float(np.mean(arr[-100:])), int(np.isnan(arr).sum())))
     log_file.close()
-    return agents
+    return model
 
 
 def load_td3(cfg, uav_traverse, model_subdir="Proposed", model_dir=None,
              model_episode="best"):
-    """Load previously-trained per-agent TD3 checkpoints instead of retraining.
+    """Load a previously-trained TD3 checkpoint instead of retraining.
 
-    Returns a LIST of ``SharedTD3`` agents (one per UAV), each loaded from
-    ``<model_dir>/UAV_<N>/<model_subdir>/<episode>_agent<i>.pth``.
-
-    Used by ``run_end2end`` to reuse the layer-3 ``Proposed`` models produced by
+    Used by ``run_end2end`` to reuse the layer-3 ``Proposed`` model produced by
     ``run_traj`` (same 4D clustering + ga_eqtsp assignment) rather than training
-    identical networks a second time.
+    an identical network a second time.
     """
     model_dir = model_dir or _common.MODEL_DIR
     uav_num = int(cfg["uav_num"])
     env = _make_env(cfg, uav_traverse)
     max_action = np.array([float(cfg["v_max"]), 2.0 * np.pi], dtype=np.float32)
     min_action = np.array([0.0, 0.0], dtype=np.float32)
-    save_dir = os.path.join(model_dir, "UAV_%d" % uav_num, model_subdir)
-    agents = []
-    for i in range(uav_num):
-        agent = SharedTD3(env.local_obs_dim, env.action_dim,
-                          max_action, min_action)
-        ckpt = traj_test.resolve_agent_model_path(save_dir, model_episode, i)
-        if not os.path.exists(ckpt):
-            raise FileNotFoundError(
-                "reuse of '%s' checkpoint requested but not found: %s "
-                "(run experiment/run_traj.py first)" % (model_subdir, ckpt))
-        agent.load(ckpt)
-        agents.append(agent)
-    print("reused %d checkpoint(s) -> %s" % (uav_num, save_dir))
-    return agents
+    model = SharedTD3(env.local_obs_dim, env.action_dim, max_action, min_action)
+    ckpt = traj_test.resolve_model_path(
+        os.path.join(model_dir, "UAV_%d" % uav_num, model_subdir), model_episode)
+    if not os.path.exists(ckpt):
+        raise FileNotFoundError(
+            "reuse of '%s' checkpoint requested but not found: %s "
+            "(run experiment/run_traj.py first)" % (model_subdir, ckpt))
+    model.load(ckpt)
+    print("reused checkpoint -> %s" % ckpt)
+    return model
 
 
 def rollout_evaluate(cfg, uav_traverse, policy, pipeline_run_id, method,
                      brief_name, log_dir=None):
     """Deterministic rollout -> ``.npz`` log + metrics JSONs -> metrics dict.
-
-    ``policy`` is either a single stateless policy used by all UAVs (the greedy
-    baseline) or a per-UAV LIST of ``SharedTD3`` agents (the proposed model).
-    It is passed straight through to ``traj_test.rollout``.
 
     Writes three artifacts per run:
     * ``<log_dir>/<pipeline_run_id>.npz``            (rollout log for plotting),
