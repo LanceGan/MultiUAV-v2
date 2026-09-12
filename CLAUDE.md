@@ -100,6 +100,16 @@ docs/          specs(设计) + plans(计划)
 ### 关键认识
 通信感知序列绕路避开中断是**固有权衡**：makespan 增加换中断降低，无法两全。即使 λ_out=1.0 仍有 +25.5% makespan 代价，论文需如实呈现"可靠性 vs 时间"的权衡。
 
+### 实验3：MARL 算法对比（`run_marl_compare.py`）
+**问题**：对比四种 MARL 算法（参数共享 TD3 vs MADDPG/MATD3/MAPPO）的训练效果。
+**方法**：N=2、500 集、统一环境/4D 聚类/GA_EQTSP 序列/seed。三个新算法（MADDPG/MATD3/MAPPO）为 CTDE 架构（per-agent actor + 集中 critic），实现于 `trajectory/{maddpg,matd3,mappo}.py`。
+**结果**（best_reward / avg_last100，500 集）：
+- MADDPG：14819 / **+4395**（稳定）
+- ILD3（参数共享 TD3）：13489 / **-82**（发散）
+- MAPPO：6189 / **+4344**（稳定）
+- MATD3：9259 / **-951**（发散）
+**结论**：**TD3 系列（ILD3、MATD3）训练后期发散，DDPG（MADDPG）和 PPO（MAPPO）稳定**。这解释了之前 ILD3 需要"确定性 best 模型选择"来规避发散。on-policy PPO 最稳但 best_reward 较低（样本效率低）。
+
 ## 已知问题与待办
 
 1. 放量 N=3/4 的轨迹+端到端（低优先级，轨迹不反超贪心）
