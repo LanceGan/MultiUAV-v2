@@ -350,6 +350,100 @@ def _plot_sequence(runs, figs_dir):
 
 
 # ---------------------------------------------------------------------------
+# 4b. Layer-1 clustering within-cluster variance (the 4D objective).
+# ---------------------------------------------------------------------------
+def _plot_cluster_metrics(runs, figs_dir):
+    """Bar chart of the 4 clustering methods on within-cluster variance — the
+    objective the 4D method actually minimizes (lower = more homogeneous)."""
+    if not runs:
+        return None
+    methods = [m for m in ASSIGN_METHOD_ORDER
+               if any(r.get("method") == m for r in runs)]
+    uav_nums = sorted({int(r["uav_num"]) for r in runs})
+    panels = (("g2a_outage_within_var", "簇内 G2A 中断方差"),
+              ("a2g_sinr_within_var", "簇内 A2G SINR 方差"),
+              ("load_within_var", "簇内数据量方差"))
+    n_bars = len(uav_nums)
+    width = 0.8 / max(n_bars, 1)
+    color_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+
+    fig, axes = plt.subplots(1, len(panels), figsize=(5.4 * len(panels), 5))
+    for ax, (key, label) in zip(axes, panels):
+        x = np.arange(len(methods))
+        for bi, un in enumerate(uav_nums):
+            values = []
+            for m in methods:
+                vals = [float(r[key]) for r in runs
+                        if r.get("method") == m and int(r["uav_num"]) == un
+                        and key in r]
+                values.append(float(np.mean(vals)) if vals else float("nan"))
+            bars = ax.bar(x + (bi - (n_bars - 1) / 2.0) * width, values, width,
+                          label="UAV %d" % un,
+                          color=color_cycle[bi % len(color_cycle)])
+            for bar, v in zip(bars, values):
+                if np.isfinite(v):
+                    ax.text(bar.get_x() + bar.get_width() / 2.0, v,
+                            "%.3g" % v, ha="center", va="bottom", fontsize=8)
+        ax.set_xticks(x)
+        ax.set_xticklabels(methods, rotation=20, ha="right", fontsize=8)
+        ax.set_title(label, fontsize=10)
+        ax.grid(alpha=0.3, axis="y")
+        if n_bars > 1:
+            ax.legend(fontsize=7)
+    fig.suptitle("聚类簇内方差（越小越同质）")
+    fig.tight_layout()
+    out = os.path.join(figs_dir, "cluster_metrics.png")
+    fig.savefig(out, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 4c. Layer-2 sequence trajectory figure (straight-line executor + G2A map).
+# ---------------------------------------------------------------------------
+def _plot_sequence_trajectories(seq_runs, figs_dir):
+    """Trajectory figure: a straight-line executor follows each sequence's visit
+    order, overlaid on the G2A outage map.  Contrasts the Euclidean sequence with
+    the comm-aware GA_EQTSP sequence — the latter avoids high-outage (red) regions.
+    """
+    if not seq_runs:
+        return None
+    uav_nums = sorted({int(r["uav_num"]) for r in seq_runs})
+    g2a_xs, g2a_ys, g2a_grid = _query_radio_grid(radio_map_G2A, "outage")
+
+    outputs = []
+    for un in uav_nums:
+        eu = next((r for r in seq_runs
+                   if r.get("method") == "ga_euclidean" and int(r["uav_num"]) == un),
+                  None)
+        ga = next((r for r in seq_runs
+                   if r.get("method") == "ga_eqtsp" and int(r["uav_num"]) == un),
+                  None)
+        if eu is None or ga is None:
+            continue
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+        for ax, (run, title) in zip(axes,
+                                    ((eu, "纯欧氏序列"), (ga, "GA_EQTSP 通信感知序列"))):
+            cf = ax.contourf(g2a_xs, g2a_ys, g2a_grid,
+                             levels=np.linspace(0.0, 1.0, 11), cmap="Reds")
+            for u in run["per_uav"]:
+                pts = np.asarray(u["ordered_points"], dtype=float) * UNIT_TO_KM
+                ax.plot(pts[:, 0], pts[:, 1], lw=1.5, label="UAV %d" % int(u["uav"]))
+            ax.set_title(title)
+            ax.set_xlabel("x (km)")
+            ax.set_ylabel("y (km)")
+            ax.legend(fontsize=7)
+        fig.colorbar(cf, ax=axes, label="G2A 中断概率")
+        fig.suptitle("轨迹对比 (UAV %d)：直线执行器 + 序列" % un)
+        fig.tight_layout()
+        out = os.path.join(figs_dir, "trajectory_sequence_uav%d.png" % un)
+        fig.savefig(out, dpi=DPI, bbox_inches="tight")
+        plt.close(fig)
+        outputs.append(out)
+    return outputs
+
+
+# ---------------------------------------------------------------------------
 # 5. Training reward curves.
 # ---------------------------------------------------------------------------
 def _load_rewards(logs_dir):
@@ -437,15 +531,25 @@ def plot_all(logs_dir="results/logs", figs_dir="results/figs"):
     # 2. Metric comparison bar charts.
     generated.extend(_plot_metrics(_load_metrics(logs_dir), figs_dir))
 
-    # 3. Layer-1 clustering figure (points colored by cluster label).
-    cluster_out = _plot_clusters(_load_assign(logs_dir), figs_dir)
+    # 3. Layer-1 clustering figures: points colored by cluster label + the
+    #    within-cluster variance metrics (the 4D objective).
+    assign_runs = _load_assign(logs_dir)
+    cluster_out = _plot_clusters(assign_runs, figs_dir)
     if cluster_out:
         generated.append(cluster_out)
+    cluster_metrics_out = _plot_cluster_metrics(assign_runs, figs_dir)
+    if cluster_metrics_out:
+        generated.append(cluster_metrics_out)
 
-    # 4. Layer-2 sequence comparison figure (comm_cost / euclidean_length).
-    seq_out = _plot_sequence(_load_seq(logs_dir), figs_dir)
+    # 4. Layer-2 sequence figures: comm_cost / euclidean_length bars + the
+    #    trajectory figure (straight-line executor + G2A outage map).
+    seq_runs = _load_seq(logs_dir)
+    seq_out = _plot_sequence(seq_runs, figs_dir)
     if seq_out:
         generated.append(seq_out)
+    seq_traj_out = _plot_sequence_trajectories(seq_runs, figs_dir)
+    if seq_traj_out:
+        generated.extend(seq_traj_out)
 
     # 5. Training reward curves.
     reward_out = _plot_rewards(_load_rewards(logs_dir), figs_dir)

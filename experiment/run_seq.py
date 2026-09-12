@@ -44,7 +44,7 @@ def run(uav_nums=(2, 3, 4), seed=42, log_dir=None):
             total_eucl = 0.0
             total_comm = 0.0
             per_uav = []
-            for c, (cpts, _gidx, cds) in enumerate(clusters):
+            for c, (cpts, gidx, cds) in enumerate(clusters):
                 ordered, order_idx, method_cost = fn(
                     cpts, cfg["ini_loc"], cfg["end_loc"], cds, cfg)
                 eucl, comm = _common.path_cost(ordered, cds, cfg, seed)
@@ -56,6 +56,9 @@ def run(uav_nums=(2, 3, 4), seed=42, log_dir=None):
                     "euclidean_length": float(eucl),
                     "comm_cost": float(comm),
                     "order_indices": [int(x) for x in order_idx],
+                    # 轨迹图需要：访问顺序的全局点索引 + 完整顺序坐标（含起终点锚点）
+                    "ordered_global_indices": [int(gidx[x]) for x in order_idx],
+                    "ordered_points": [[float(x), float(y)] for x, y in ordered],
                 })
 
             result = {

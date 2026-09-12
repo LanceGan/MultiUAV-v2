@@ -27,9 +27,17 @@ from experiment import _common
 
 
 def cluster_metrics(labels, points, data_sizes, g2a, a2g, n):
-    """Per-cluster spatial / comm / load statistics + across-cluster balance."""
+    """Per-cluster spatial / comm / load statistics + across-cluster balance.
+
+    The 4D clustering objective minimizes the *within-cluster* variance of
+    [spatial, G2A outage, A2G SINR, data volume], so the correct quality metric
+    is the mean within-cluster variance (homogeneity), NOT the between-cluster
+    std of means.  Both are reported: the ``*_within_var`` keys are what the 4D
+    method actually optimizes; the ``*_std`` keys are kept for reference.
+    """
     per_cluster = []
     sizes, loads, spatial, comm_out, comm_sinr = [], [], [], [], []
+    within_out, within_sinr, within_load = [], [], []
     for c in range(n):
         mask = np.asarray(labels) == c
         size = int(mask.sum())
@@ -43,6 +51,9 @@ def cluster_metrics(labels, points, data_sizes, g2a, a2g, n):
         spatial.append(spread)
         comm_out.append(out_mean)
         comm_sinr.append(sinr_mean)
+        within_out.append(float(np.var(g2a[mask])))
+        within_sinr.append(float(np.var(a2g[mask])))
+        within_load.append(float(np.var(data_sizes[mask])))
         per_cluster.append({
             "cluster": c,
             "size": size,
@@ -60,6 +71,10 @@ def cluster_metrics(labels, points, data_sizes, g2a, a2g, n):
         "spatial_spread_std": float(np.std(spatial)),
         "g2a_outage_std": float(np.std(comm_out)),
         "a2g_sinr_std": float(np.std(comm_sinr)),
+        # 4D 目标：簇内方差（越小越同质）
+        "g2a_outage_within_var": float(np.mean(within_out)),
+        "a2g_sinr_within_var": float(np.mean(within_sinr)),
+        "load_within_var": float(np.mean(within_load)),
     }
 
 
