@@ -110,6 +110,10 @@ docs/          specs(设计) + plans(计划)
 - MATD3：9259 / **-951**（发散）
 **结论**：**TD3 系列（ILD3、MATD3）训练后期发散，DDPG（MADDPG）和 PPO（MAPPO）稳定**。这解释了之前 ILD3 需要"确定性 best 模型选择"来规避发散。on-policy PPO 最稳但 best_reward 较低（样本效率低）。
 
+**补充：确定性 rollout 性能对比（`run_marl_rollout.py`）**
+500 集训练的四个 best 模型做确定性 rollout，**四个都没完成**（times=[-1,-1]，makespan 全 500s 截断）——因为 500 集训练不够（ILD3 需 2000 集才完成）。所以 500 集只能得出"训练稳定性"结论（TD3 发散、DDPG/PPO 稳定），**不能得出"任务性能"结论**（需 2000 集完整训练）。
+奖励曲线图：`plots/plot_marl_compare.py` → `results/figs/marl_reward_compare.png`（四算法原始 + 平滑曲线）。
+
 ## 已知问题与待办
 
 1. 放量 N=3/4 的轨迹+端到端（低优先级，轨迹不反超贪心）
