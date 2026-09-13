@@ -100,6 +100,16 @@ docs/          specs(设计) + plans(计划)
 ### 关键认识
 通信感知序列绕路避开中断是**固有权衡**：makespan 增加换中断降低，无法两全。即使 λ_out=1.0 仍有 +25.5% makespan 代价，论文需如实呈现"可靠性 vs 时间"的权衡。
 
+### 实验4：问题建模重构——时延 QoS 才是核心约束（关键发现）
+**发现 1：comm_cost 降 46% 主要来自"时延项"，不是"中断项"**（N=4 边权分解）：
+- 欧氏：d/v=878, λE·E=225, λout·t=809, **λτ·delay=33693**
+- GA_EQTSP：d/v=1055, λE·E=271, λout·t=707, **λτ·delay=17278**
+- 即中断项只降 12.6%（对应端到端 outage 降 9%），时延项降 48.8% 才是 comm_cost 降 46% 的来源。**通信感知实际主要降"时延违约"，不是"避开中断"。**
+
+**发现 2：数据量与上行速率严重不匹配**：A2G 平均 SINR=-3.2dB → rate≈0.56 Mbps；数据量 100~300 Mbit → 时延 τ=data/rate≈177~531s，远超 τ_max=80s，几乎所有边违约。per-edge τ 分布（N=4）：欧氏 p50=234s/max=3510s，GA_EQTSP p50=193s/max=1264s（GA_EQTSP 主要降极端时延 max 降 64%，中位时延改善小 17%）。
+
+**重新建模方向**：核心约束应为"时延 QoS"（τ_k ≤ τ_max），通信感知 = 走高 A2G 区满足时延约束。需校准数据量（或带宽 B）与 τ_max，让"基准违反、我们满足"成立。
+
 ### 实验3：MARL 算法对比（`run_marl_compare.py`）
 **问题**：对比四种 MARL 算法（参数共享 TD3 vs MADDPG/MATD3/MAPPO）的训练效果。
 **方法**：N=2、500 集、统一环境/4D 聚类/GA_EQTSP 序列/seed。三个新算法（MADDPG/MATD3/MAPPO）为 CTDE 架构（per-agent actor + 集中 critic），实现于 `trajectory/{maddpg,matd3,mappo}.py`。
