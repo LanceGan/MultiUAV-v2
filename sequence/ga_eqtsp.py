@@ -12,7 +12,8 @@ ga_choose / run），起点固定在 ``full_data`` 下标 0、终点固定在 ``
 由于 ``edge_cost`` 几何部分（d/E/t/C）沿 i↔j 对称、仅时延惩罚随起点数据量变化，
 ``comm_dis_mat`` 对每个无序对只采样一次无线电地图（data_size=0 得到基础代价与
 容量 C_ij），再分别叠加两端数据量的时延惩罚，结果与逐边调用 ``edge_cost`` 完全一致
-（``cost(ds) = base + λτ·max(0, ds/C_ij − τ_max)``），但采样量减半。
+（``cost(ds) = base + λτ·max(0, ds·flight_time/C_ij − τ_max)``，其中
+``flight_time = d_ij/v_max``），但采样量减半。
 """
 
 import math
@@ -50,11 +51,16 @@ def comm_dis_mat(full_data, data_sizes, cfg):
 
     ``dis_mat[i][j]`` 表示从点 i 飞往点 j 并卸载点 i 数据量的综合代价。起点（下标 0）
     与终点（下标 n-1）本身无待卸载数据（data_size=0）。
+
+    时延项与 ``edge_cost`` 完全一致：τ = ds·flight_time/C_ij（秒），其中
+    flight_time = d_ij/v_max。几何/能耗/中断部分沿 i↔j 对称，故每无序对只采样一次
+    无线电地图，再分别叠加两端数据量的时延惩罚。
     """
     n = full_data.shape[0]
     k = len(data_sizes)
     tau_max = float(cfg["tau_max"])
     lam_tau = float(cfg["lambda_tau"])
+    v_max = float(cfg["v_max"])
 
     dis_mat = np.full((n, n), np.inf)
     for i in range(n):
@@ -64,12 +70,13 @@ def comm_dis_mat(full_data, data_sizes, cfg):
                 full_data[i][:2], full_data[j][:2], 0.0, cfg)
             base = float(info["cost"])
             c_ij = float(info["C_ij"])
+            flight_time = float(info["d_ij"]) / v_max  # 秒
 
             ds_i = float(data_sizes[i - 1]) if 0 < i < n - 1 else 0.0
             ds_j = float(data_sizes[j - 1]) if 0 < j < n - 1 else 0.0
 
-            dis_mat[i][j] = base + lam_tau * max(0.0, ds_i / c_ij - tau_max)
-            dis_mat[j][i] = base + lam_tau * max(0.0, ds_j / c_ij - tau_max)
+            dis_mat[i][j] = base + lam_tau * max(0.0, ds_i * flight_time / c_ij - tau_max)
+            dis_mat[j][i] = base + lam_tau * max(0.0, ds_j * flight_time / c_ij - tau_max)
     return dis_mat
 
 

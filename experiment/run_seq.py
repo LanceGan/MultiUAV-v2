@@ -47,7 +47,7 @@ def run(uav_nums=(2, 3, 4), seed=42, log_dir=None):
             for c, (cpts, gidx, cds) in enumerate(clusters):
                 ordered, order_idx, method_cost = fn(
                     cpts, cfg["ini_loc"], cfg["end_loc"], cds, cfg)
-                eucl, comm = _common.path_cost(ordered, cds, cfg, seed)
+                eucl, comm = _common.path_cost(ordered, cds, order_idx, cfg, seed)
                 total_eucl += eucl
                 total_comm += comm
                 per_uav.append({

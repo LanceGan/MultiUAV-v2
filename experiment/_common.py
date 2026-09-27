@@ -113,12 +113,16 @@ def per_point_comm(points, seed, uav_height_km=UAV_HEIGHT_KM):
     return g2a, a2g
 
 
-def path_cost(ordered_points, data_sizes, cfg, seed):
+def path_cost(ordered_points, data_sizes, order, cfg, seed):
     """Evaluate an ordered route ``[ini, p0..p_{K-1}, end]`` on both objectives.
 
     Returns ``(euclidean_length, comm_cost)``.  The comm-aware cost follows the
-    layer-2 ``comm_dis_mat`` convention: the edge departing point ``i`` carries
-    that point's data size (the ini/end anchor points carry none).
+    layer-2 ``comm_dis_mat`` convention: the edge departing a visited point
+    carries THAT point's data size (the ini/end anchor points carry none).
+
+    ``data_sizes`` is indexed by point identity in the cluster's natural order;
+    ``order[k]`` is the natural index of the k-th visited point, so the edge
+    departing the k-th visited point carries ``data_sizes[order[k]]``.
     """
     from sequence import radio_path
 
@@ -130,7 +134,7 @@ def path_cost(ordered_points, data_sizes, cfg, seed):
         a = ordered_points[i][:2]
         b = ordered_points[i + 1][:2]
         eucl += float(np.linalg.norm(b - a))
-        ds = float(data_sizes[i - 1]) if 0 < i < n - 1 else 0.0
+        ds = float(data_sizes[order[i - 1]]) if 0 < i < n - 1 else 0.0
         comm += float(radio_path.edge_cost(a, b, ds, cfg)["cost"])
     return eucl, comm
 

@@ -134,7 +134,7 @@ class SharedTD3(object):
         return a.cpu().numpy().flatten()
 
     def train(self, replay_buffer):
-        """One TD3 gradient step on a batch sampled from the shared buffer."""
+        
         s, a, r, s_prime, done = replay_buffer.sample(self.batch_size)
 
         with torch.no_grad():

@@ -21,7 +21,7 @@ Design (faithful to the single-UAV ``World.py`` physics + the multi-UAV spec):
   symmetric ``y`` update); out-of-bounds moves are cancelled and penalised.
 
 * Data offloading: at every step ``rate = B*log2(1 + 10**(SINR_A2G/10))`` with
-  ``B = 1.0`` Mbps, and ``data_buffer -= rate*delta_t``. **Unit convention
+  ``B = BANDWIDTH`` (= 10 MHz), and ``data_buffer -= rate*delta_t``. **Unit convention
   (mandatory): ``data_buffer`` is in Mbit and ``rate`` in Mbps, so
   ``tau = data_buffer/rate`` is in seconds — no 8x factor.** Data of point k is
   loaded when the UAV leaves the previous waypoint (or at ``reset`` for the
@@ -36,8 +36,8 @@ Design (faithful to the single-UAV ``World.py`` physics + the multi-UAV spec):
   ``P_energy = lambda_E * rotary_power(v*100) * delta_t``.
 
 * G2A outage: each step ``outage = getPointMiniOutage(...)``; reward term
-  ``P_out = lambda_out * outage`` (enabled — the single-UAV code had this
-  commented out).
+  ``P_out = TRAJ_OUTAGE_WEIGHT * outage`` (decoupled from the sequence layer's
+  ``lambda_out``).
 
 * Collision: if the distance to another active UAV is ``< safe_distance*2``
   (``safe_distance = 0.1`` = 10 m in 100 m units by default), a ``P_collision``
@@ -95,8 +95,9 @@ P_COLLISION = 2.0           # max collision penalty (soft, proportional — a fl
 P_OUT_OF_BOUNDS = 1.0       # per-unit overshoot when leaving the region
 TIME_PENALTY = 1.0          # per-step time cost (encourages faster completion -> min makespan)
 TRAJ_OUTAGE_WEIGHT = 1.0    # trajectory outage penalty (moderate; sequence layer uses lambda_out=3.0 separately)
+RATE_REWARD_WEIGHT = 0.3    # offload reward weight (Mbit offloaded this step, gated on progress -> encourage high-rate flight)
 
-BANDWIDTH = 1.0             # A2G bandwidth (Mbps); spec B = 1.0
+BANDWIDTH = 10.0            # A2G bandwidth (MHz); was 1.0 (too low -> huge delay); rate = B*log2(1+SINR) Mbps
 DEFAULT_UAV_H = 1.0         # 100 m altitude in 100 m units (-> 0.1 km for map)
 DEFAULT_ARRIVE_DIST = 0.5   # arrival radius in 100 m units (50 m, single-UAV)
 DEFAULT_T = 1000            # episode horizon in steps (aligned with single-UAV T=1000; 200 was a smoke value)
@@ -421,12 +422,14 @@ class MultiUAVInspectionEnv(object):
             # Movement (out-of-bounds -> clip to boundary + small penalty).
             reward += self._move(i, v, theta)
 
+            progressing = False
             if dist_pre is not None:
                 uav = self.UAVs[i]
                 dist_cur = math.hypot(uav.x - target_pt[0], uav.y - target_pt[1])
                 raw_progress = dist_pre - dist_cur  # >0 靠近, <0 远离
+                progressing = raw_progress > 0.0
 
-                # 前进奖励（97c7f05 版本：截断式，只奖励靠近不惩罚远离）
+                # 前进奖励（截断式，只奖励靠近不惩罚远离）
                 reward += 60.0 * max(0.0, raw_progress)
                 # 势能差塑形：全程平滑指向目标的梯度
                 reward += 35.0 * (1.0 / (dist_cur + 1.0) - 1.0 / (dist_pre + 1.0))
@@ -440,10 +443,13 @@ class MultiUAVInspectionEnv(object):
                         np.dot(move_vec, dir_to_target) / (move_norm * dir_norm), -1.0, 1.0))
                     reward += 4.0 * forward
 
-            # Data offloading at the post-move position.
+            # 上行数据卸载.
             prev_buffer = self._data_buffer[i]
             rate = self._offload(i, self.delta_t)
             self._offloaded[i] += prev_buffer - self._data_buffer[i]
+            # 上行速率奖励：仅在朝目标前进时给予，防止在高速率区打转刷奖励。
+            if progressing:
+                reward += RATE_REWARD_WEIGHT * (prev_buffer - self._data_buffer[i])
             self._rate_sum[i] += rate
             self._rate_steps[i] += 1
             self._offload_elapsed[i] += self.delta_t
@@ -451,13 +457,13 @@ class MultiUAVInspectionEnv(object):
                 self._buffer_done[i] = True
                 self._tau_done[i] = self._offload_elapsed[i]
 
-            # G2A outage penalty (enabled).
+            # 下行通信质量
             outage = self._get_g2a_outage(i)
             self._outage[i] = outage
             self._outage_duration[i] += outage * self.delta_t
             reward -= TRAJ_OUTAGE_WEIGHT * outage
 
-            # Collision penalty (negative term).
+            # 碰撞惩罚
             reward += self._collision_penalty(i)
 
             # Arrival check.

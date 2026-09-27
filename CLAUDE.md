@@ -110,6 +110,13 @@ docs/          specs(设计) + plans(计划)
 
 **重新建模方向**：核心约束应为"时延 QoS"（τ_k ≤ τ_max），通信感知 = 走高 A2G 区满足时延约束。需校准数据量（或带宽 B）与 τ_max，让"基准违反、我们满足"成立。
 
+### 实验5：带宽 B 校准（1→10 MHz）+ 违约比例分析
+**改动**：带宽 B 从 1→10 MHz（`env.py` BANDWIDTH、`radio_path.py` BANDWIDTH），rate 增 10 倍，时延 τ 降 10 倍（p50 从 127-234s 降到 13-23s）。
+**违约比例**（τ > τ_max，B=10）：
+- N=2：τ_max=60s 时，欧氏违约 5%、GA_EQTSP 违约 **0%**（清晰成立）
+- N=4：τ_max=60s 时，欧氏 27.5%、GA_EQTSP 22.5%（差值仅 5pp，区分度弱；τ_max=40s 时 GA_EQTSP 反而更差）
+**关键认识**：GA_EQTSP 边权里时延是**软惩罚**（`λτ·max(0,τ-τ_max)`），软惩罚只"降低违约幅度"（max 351→254s），不"消除违约边数量"。若要让 N=4 也成立，需提高 λτ 权重或把时延改硬约束。
+
 ### 实验3：MARL 算法对比（`run_marl_compare.py`）
 **问题**：对比四种 MARL 算法（参数共享 TD3 vs MADDPG/MATD3/MAPPO）的训练效果。
 **方法**：N=2、500 集、统一环境/4D 聚类/GA_EQTSP 序列/seed。三个新算法（MADDPG/MATD3/MAPPO）为 CTDE 架构（per-agent actor + 集中 critic），实现于 `trajectory/{maddpg,matd3,mappo}.py`。
@@ -123,6 +130,23 @@ docs/          specs(设计) + plans(计划)
 **补充：确定性 rollout 性能对比（`run_marl_rollout.py`）**
 500 集训练的四个 best 模型做确定性 rollout，**四个都没完成**（times=[-1,-1]，makespan 全 500s 截断）——因为 500 集训练不够（ILD3 需 2000 集才完成）。所以 500 集只能得出"训练稳定性"结论（TD3 发散、DDPG/PPO 稳定），**不能得出"任务性能"结论**（需 2000 集完整训练）。
 奖励曲线图：`plots/plot_marl_compare.py` → `results/figs/marl_reward_compare.png`（四算法原始 + 平滑曲线）。
+
+### 实验6：序列层两个时延 bug 修复 + 收益重测（2026-09-27）
+**发现两个 bug**（都影响时延项，之前序列层"通信感知收益"被污染）：
+1. `sequence/ga_eqtsp.py` 的 `comm_dis_mat` 时延项漏乘 `flight_time`（写成 `λτ·max(0, ds/C_ij − τ_max)`，无量纲，且 ds/C_ij ~ O(1-30) << τ_max=80，**时延项恒为 0**）——GA 优化时根本没在优化时延，只在避中断；`edge_cost`（报告指标）是对的（`τ = data·flight_time/C`）。
+2. `experiment/_common.py` 的 `path_cost` 按"路线位置"而非"点身份"取数据量（`data_sizes[i-1]` 而非 `data_sizes[order[i-1]]`），非自然访问序时每条边配错数据。已加 `order` 参数修复。
+**修复后序列收益重测**（λ_out=3.0、B=10、修后 GA）：**0.80% / 23.51% / 36.99%（N=2/3/4）**，且 `method_cost == path_cost` 完全一致。分解显示收益由**时延项**驱动（N=3 违约清零、N=4 降 98.9%），代价是绕路（d/v +15.7%/+19.1%）；N=2 无违约边故收益≈0。
+**回归测试**：`test_comm_dis_mat_consistent_with_edge_cost`（comm_dis_mat == edge_cost 逐边一致）、`test_path_cost_pairs_data_by_visit_order`。
+
+### 实验7：轨迹层"通信感知偏离"是弱贡献（2026-09-27，重要结论）
+**SCA 基线**（`trajectory/sca.py` + `experiment/run_sca.py`）：数值 SCA/SQP（scipy SLSQP + 平滑场 `ChannelField`），逐段优化"偏离直线的实际轨迹"最小化与序列层同一套 comm cost，用完整无线电地图（oracle 上界）。
+**关键更正**：之前"SCA 相对贪心 10× 上行速率"是**乌龙**——旧 `UAV_2_Baseline.metrics.json` 是 B=1 时代产物，B=10 下贪心速率实为 **14.14**（非 1.41）。同口径 B=10 下 SCA 14.48 vs 贪心 14.14（**仅 +2.4%**）。
+**带宽 B 扫描**（贪心 vs SCA，N=2）：
+- B=1：速率 +38.2% 但时延 +23.4%（更差）、makespan +25%——低带宽下时延被"航段飞行时间"封顶，绕路拉长航段反而更差
+- B=3：速率 +6.9%、时延 +2.2%（更差）；B=5：速率 +3.5%、时延 -1.6%（可忽略）；B=10：速率 +2.4%、时延 +2.3%（更差）
+**结论：没有任何 B 让轨迹层"速率明显涨 + 时延明显降"同时成立。** 偏离追速率的好处几乎总被绕路代价（makespan +、航段拉长导致时延封顶升高）抵消，轨迹层"通信感知偏离"是**边际收益**。
+**DRL 探索（也失败）**：给 ILD3 状态加 rate/outage 观测 + 上行速率奖励（权重 1.0/0.3/门控），四个算法全部**无法完成任务**（times=[-1,-1]、makespan 500 截断），轨迹在高速率区**来回震荡**（大角度折返 ~40-52%），只有 TD3 系学会高速率（13.8-16.2 Mbps）。根因：raw rate/outage 非光滑（LoS 跳变）塞进状态 → 价值函数非光滑 → 策略振荡；速率奖励（即使门控）给"高速率区盘旋"留了 reward-hacking 漏洞。
+**轨迹层定位**：维持"执行序列的组件"弱贡献定位，论文重心在层1 聚类 + 层2 序列（有真实、可复现的收益）。
 
 ## 已知问题与待办
 

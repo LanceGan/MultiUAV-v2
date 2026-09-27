@@ -8,7 +8,7 @@
 
 综合边权：
     cost = d_ij/v_max + λ_E·E_ij + λ_out·t_ij + λ_τ·max(0, τ_ij − τ_max)
-其中 τ_ij = data_size / C_ij 为传输时延。
+其中 τ_ij = data_size·flight_time/C_ij 为传输时延（秒），flight_time = d_ij/v_max。
 
 单位约定（与项目一致）：坐标/高度均为 100m 单位，查询无线电地图前须
 ``/10`` 转 km（高度同理，100m → 0.1 km）。
@@ -23,8 +23,8 @@ from radio_map import radio_map_A2G, radio_map_G2A
 # 采样步长（100m 单位，沿用单机约定）
 STEP = 0.0915
 # A2G 带宽（Mbps）
-BANDWIDTH = 1.0
-# 可卸载数据量下限，避免 τ = data_size / C_ij 除零
+BANDWIDTH = 10.0   # A2G bandwidth (MHz); was 1.0 (too low -> huge delay)
+# 可卸载数据量下限，避免 τ = data_size·flight_time/C_ij 除零
 C_FLOOR = 1e-3
 # 默认 UAV 高度（100m 单位，即 100m → 0.1 km）
 DEFAULT_UAV_H = 1.0
