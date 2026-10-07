@@ -42,8 +42,8 @@ class GreedyPolicy(object):
         return np.array([self.v_max, theta], dtype=np.float32)
 
 
-def _make_env(cfg, uav_traverse):
-    env = MultiUAVInspectionEnv(cfg, safe_distance=0.1)
+def _make_env(cfg, uav_traverse, use_a2g=True):
+    env = MultiUAVInspectionEnv(cfg, safe_distance=0.1, use_a2g=use_a2g)
     env.set_uav_traverse(uav_traverse)
     return env
 
@@ -65,7 +65,7 @@ def _deterministic_reward(env, model, uav_traverse, uav_num, min_action, max_act
 
 
 def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
-              model_dir=None, log_dir=None, log_every=10):
+              model_dir=None, log_dir=None, log_every=10, use_a2g=True):
     """Train parameter-shared independent TD3 on the injected traverse.
 
     Mirrors ``trajectory/train.py`` but *replaces* the smoke ``balanced_traverse``
@@ -78,7 +78,7 @@ def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    env = _make_env(cfg, uav_traverse)
+    env = _make_env(cfg, uav_traverse, use_a2g=use_a2g)
     state_dim = env.local_obs_dim
     action_dim = env.action_dim
     max_action = np.array([float(cfg["v_max"]), 2.0 * np.pi], dtype=np.float32)

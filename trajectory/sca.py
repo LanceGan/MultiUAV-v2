@@ -75,12 +75,16 @@ class ChannelField(object):
         return np.clip(self._outage_fn(pts_100m), 0.0, 1.0)
 
 
-def trajectory_cost(field, poly_100m, data_size, cfg):
-    """Comm-aware cost of a polyline ``(M+1, 2)`` in 100m units."""
+def trajectory_cost(field, poly_100m, data_size, cfg, use_a2g=True):
+    """Comm-aware cost of a polyline ``(M+1, 2)`` in 100m units.
+
+    ``use_a2g=False`` drops the A2G delay term (``lam_tau=0``), so the SCA
+    baseline optimises only the G2A outage + flight time (G2A-only tier).
+    """
     v_max = float(cfg["v_max"])
     lam_E = float(cfg["lambda_E"])
     lam_out = float(cfg["lambda_out"])
-    lam_tau = float(cfg["lambda_tau"])
+    lam_tau = float(cfg["lambda_tau"]) if use_a2g else 0.0
     tau_max = float(cfg["tau_max"])
 
     mid = (poly_100m[:-1] + poly_100m[1:]) / 2.0
@@ -99,7 +103,8 @@ def trajectory_cost(field, poly_100m, data_size, cfg):
             + lam_tau * max(0.0, tau - tau_max))
 
 
-def optimize_segment(field, a, b, data_size, cfg, m=5, n_restarts=3, seed=0):
+def optimize_segment(field, a, b, data_size, cfg, m=5, n_restarts=3, seed=0,
+                     use_a2g=True):
     """Refine the straight segment ``a -> b`` (SCA); never worse than straight.
 
     Returns ``(polyline, cost)`` where ``polyline`` has ``m + 2`` vertices.
@@ -108,7 +113,7 @@ def optimize_segment(field, a, b, data_size, cfg, m=5, n_restarts=3, seed=0):
     b = np.asarray(b, dtype=float)
 
     straight = np.vstack([a, b])
-    best_cost = trajectory_cost(field, straight, data_size, cfg)
+    best_cost = trajectory_cost(field, straight, data_size, cfg, use_a2g=use_a2g)
     best_poly = straight
 
     rng = np.random.RandomState(seed)
@@ -121,7 +126,7 @@ def optimize_segment(field, a, b, data_size, cfg, m=5, n_restarts=3, seed=0):
 
         def obj(x):
             q = np.vstack([a, x.reshape(m, 2), b])
-            return trajectory_cost(field, q, data_size, cfg)
+            return trajectory_cost(field, q, data_size, cfg, use_a2g=use_a2g)
 
         res = minimize(obj, x0, method="SLSQP", bounds=bounds,
                        options={"maxiter": 150, "ftol": 1e-5})
@@ -132,7 +137,7 @@ def optimize_segment(field, a, b, data_size, cfg, m=5, n_restarts=3, seed=0):
 
 
 def plan_route(field, waypoints, data_per_segment, cfg, m=5, n_restarts=3,
-               seed=0):
+               seed=0, use_a2g=True):
     """Plan a comm-optimised route through ``waypoints`` (list of (x, y)).
 
     ``waypoints`` is the visit sequence INCLUDING the start anchor but EXCLUDING
@@ -150,7 +155,8 @@ def plan_route(field, waypoints, data_per_segment, cfg, m=5, n_restarts=3,
         if np.linalg.norm(b - a) < 1e-9:
             continue
         poly, _ = optimize_segment(field, a, b, data, cfg,
-                                   m=m, n_restarts=n_restarts, seed=seed + k)
+                                   m=m, n_restarts=n_restarts, seed=seed + k,
+                                   use_a2g=use_a2g)
         full.append(poly[1:])  # drop the duplicated start vertex
     return np.vstack(full)
 

@@ -356,7 +356,8 @@ class MAPPO(object):
 # Training loop
 # ---------------------------------------------------------------------------
 def train_mappo(cfg, uav_traverse, total_episode=2000, model_subdir="MAPPO",
-                model_dir=None, log_dir=None, log_every=10, rollout_steps=2048):
+                model_dir=None, log_dir=None, log_every=10, rollout_steps=2048,
+                use_a2g=True):
     """Train MAPPO on the injected ``uav_traverse`` and return a result dict.
 
     Returns ``{"ep_rewards": [...], "best_reward": float, "model": <MAPPO>}``.
@@ -373,7 +374,7 @@ def train_mappo(cfg, uav_traverse, total_episode=2000, model_subdir="MAPPO",
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    env = MultiUAVInspectionEnv(cfg, safe_distance=0.1)
+    env = MultiUAVInspectionEnv(cfg, safe_distance=0.1, use_a2g=use_a2g)
     env.set_uav_traverse(uav_traverse)
     local_state_dim = env.local_obs_dim
     action_dim = env.action_dim

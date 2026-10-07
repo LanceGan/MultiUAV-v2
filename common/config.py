@@ -59,11 +59,13 @@ def get_scenario(uav_num, seed=42):
 
 
 def get_data_sizes(user_num, seed=42):
-    """Return per-point offload volume in Mbit (uniform 100–300 Mbit).
+    """Return per-point offload volume in Mbit (uniform 10–30 Mbit).
 
     Unit convention: data sizes are Mbit, so the offload time is
     ``tau = data_buffer / rate`` in seconds with no 8x factor (``rate`` is Mbps).
-    Aligned with the single-UAV paper's 100–300 Mbit scale.
+    10–30 Mbit ≈ a few inspection photos / a short video clip per point, which
+    keeps the offload delay at B=1 MHz in the tens-of-seconds range (was 100–300
+    Mbit -> hundreds of seconds, the "data-rate mismatch" fixed by experiment 5).
     """
     rng = np.random.RandomState(seed)
-    return rng.uniform(100.0, 300.0, user_num)  # Mbit
+    return rng.uniform(10.0, 30.0, user_num)  # Mbit

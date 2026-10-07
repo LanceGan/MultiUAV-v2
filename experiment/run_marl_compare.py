@@ -28,7 +28,8 @@ from trajectory import maddpg, matd3, mappo
 ALGORITHMS = ("ILD3", "MADDPG", "MATD3", "MAPPO")
 
 
-def run(uav_num=2, total_episode=500, seed=42, algorithms=ALGORITHMS, log_dir=None):
+def run(uav_num=2, total_episode=500, seed=42, algorithms=ALGORITHMS, log_dir=None,
+        all_a2g=False):
     log_dir = log_dir or _common.LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
 
@@ -44,18 +45,21 @@ def run(uav_num=2, total_episode=500, seed=42, algorithms=ALGORITHMS, log_dir=No
 
     for algo in algorithms:
         print("===== training %s =====" % algo)
+        # 默认：提出方法 ILD3 用双地图（G2A 中断 + A2G 上行时延），其余 DRL 基线只用 G2A。
+        # --all_a2g：所有算法都用双地图（架构对比实验 a，消掉"地图"变量）。
+        use_a2g = True if all_a2g else (algo == "ILD3")
         if algo == "ILD3":
             _traj.train_td3(cfg, traverse, total_episode=total_episode,
-                            model_subdir="ILD3", log_dir=log_dir)
+                            model_subdir="ILD3", log_dir=log_dir, use_a2g=use_a2g)
         elif algo == "MADDPG":
             maddpg.train_maddpg(cfg, traverse, total_episode=total_episode,
-                                model_subdir="MADDPG", log_dir=log_dir)
+                                model_subdir="MADDPG", log_dir=log_dir, use_a2g=use_a2g)
         elif algo == "MATD3":
             matd3.train_matd3(cfg, traverse, total_episode=total_episode,
-                              model_subdir="MATD3", log_dir=log_dir)
+                              model_subdir="MATD3", log_dir=log_dir, use_a2g=use_a2g)
         elif algo == "MAPPO":
             mappo.train_mappo(cfg, traverse, total_episode=total_episode,
-                              model_subdir="MAPPO", log_dir=log_dir)
+                              model_subdir="MAPPO", log_dir=log_dir, use_a2g=use_a2g)
     return 0
 
 
@@ -66,9 +70,12 @@ def main(argv=None):
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--algorithms", type=str, nargs="+", default=list(ALGORITHMS))
     parser.add_argument("--log_dir", type=str, default=None)
+    parser.add_argument("--all_a2g", action="store_true",
+                        help="all algorithms use the dual map (A2G+G2A), for the architecture ablation")
     args = parser.parse_args(argv)
     return run(uav_num=args.uav_num, total_episode=args.total_episode,
-               seed=args.seed, algorithms=args.algorithms, log_dir=args.log_dir)
+               seed=args.seed, algorithms=args.algorithms, log_dir=args.log_dir,
+               all_a2g=args.all_a2g)
 
 
 if __name__ == "__main__":

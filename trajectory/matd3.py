@@ -275,7 +275,7 @@ def _deterministic_reward(env, model, uav_traverse):
 
 
 def train_matd3(cfg, uav_traverse, total_episode=2000, model_subdir="MATD3",
-                model_dir=None, log_dir=None, log_every=10):
+                model_dir=None, log_dir=None, log_every=10, use_a2g=True):
     """Train MATD3 (CTDE) on the injected ``uav_traverse``.
 
     Returns ``{"ep_rewards": [...], "best_reward": float, "model": MATD3}`` and
@@ -290,7 +290,7 @@ def train_matd3(cfg, uav_traverse, total_episode=2000, model_subdir="MATD3",
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    env = MultiUAVInspectionEnv(cfg, safe_distance=0.1)
+    env = MultiUAVInspectionEnv(cfg, safe_distance=0.1, use_a2g=use_a2g)
     env.set_uav_traverse(uav_traverse)
     local_state_dim = env.local_obs_dim
     action_dim = env.action_dim

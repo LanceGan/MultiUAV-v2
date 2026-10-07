@@ -21,8 +21,8 @@ radio_map/     通信模型（从 SingleUAV 复制，D=4km，GBS 已 ×2 缩放�
 common/        config.py（场景配置）+ metrics.py（旋翼能耗）
 assignment/    层1：clustering.py（4D）+ baselines.py
 sequence/      层2：radio_path.py（边权采样）+ ga_eqtsp.py + baselines.py
-trajectory/    层3：env.py + td3.py + train.py + test.py + replay.py
-experiment/    编排：run_assign/seq/traj/end2end + run_all.py + evaluate.py + _common.py
+trajectory/    层3：env.py + td3.py + train.py + test.py + replay.py + sca.py（SCA 基线）+ maddpg/matd3/mappo.py（CTDE 基线）
+experiment/    编排：run_assign/seq/traj/end2end + run_all.py + evaluate.py + _common.py + run_sca.py + run_marl_compare/rollout.py
 plots/         plot_results.py（纯从日志生成图，无硬编码指标值）
 tests/         25 个单元测试
 results/       datas(点坐标) / logs(JSON+npz) / figs(图) / models(权重)
@@ -34,13 +34,14 @@ docs/          specs(设计) + plans(计划)
 - **单位**：距离 100m（区域 40×40）；无线电地图查询坐标 `/10` 转 km；**数据量用 Mbit**（rate Mbps，`τ=data/rate` 秒，无 8× 系数）
 - **能耗**：旋翼 `rotary_power(v)`（Zeng 等），`v` 须 ×100 转 m/s（SI）
 - **T=1000**（horizon，对齐单机）、**total_episode=2000**
+- **带宽 B=1 MHz**、**数据量 10~30 Mbit/点**、**τ_max=12s**（2026-10 重新标定：B=1 使时延速率受限、通信感知偏离有意义；数据 10-30 使时延绝对值回到几十秒；τ_max=12 使 ~40% 点违约）
 - 状态 `[x,y,dx,dy,data_buffer,remaining_time,其他机相对位置]`，动作 `[v, θ]`
 
 ### 校准后的权重（2026-08-29，重要）
 
 **序列边权**（`radio_path.py`）：`cost = d/v_max + λ_E·E + λ_out·t + λ_τ·max(0, τ−τ_max)`
 - λ_E = 0.0002（能耗是距离的 ~26%，次要）
-- λ_out = 1.0（中断，序列层通信感知——λ_out=3.0 过度绕路，扫描后降到 1.0，见实验记录）
+- λ_out = **3.0**（当前 config 值；曾扫描降到 1.0 后又在 c1a1bbc 回退到 3.0，实验6 的序列收益是在 3.0 下测的）
 - λ_τ = 2.0（时延 QoS 违约惩罚）
 - **τ = data·飞行时间/C**（曾有无量纲 bug：`data/C` 导致时延项恒为 0）
 
@@ -53,15 +54,15 @@ docs/          specs(设计) + plans(计划)
 
 **4D 聚类权重**（`_common.py`）：`W4D = (1.0, 1.0, 1.0, 0.5)`（空间, G2A, A2G, 数据量）
 
-## 当前状态（2026-08-29）
+## 当前状态（2026-10-06）
 
-- ✅ 全部代码完成，25 测试通过，一键复现
+- ✅ 全部代码完成，27 测试通过（25 原有 + 2 回归测试），一键复现
 - ✅ 防造假：所有指标/图从日志自动生成，无硬编码值
-- ✅ **序列层通信感知收益 17%/26%/46%（N=2/3/4）**——GA_EQTSP 相对纯欧氏 GA 的 comm_cost 降幅随规模放大，这是论文核心贡献
-- ✅ **聚类层通信感知优势**（簇内 G2A 中断方差：4D 0.032/0.027 vs 基线 0.051/0.070，N=3/4 明显）——用正确指标"簇内方差"后体现，同样随规模放大
+- ✅ **序列层通信感知收益 0.80%/23.51%/36.99%（N=2/3/4，λ_out=3.0、B=10）**——修完两个时延 bug 后重测，时延项驱动、随规模放大
+- ✅ **聚类层通信感知优势**（簇内 G2A 中断方差：4D 0.032/0.027 vs 基线 0.051/0.070，N=3/4 明显）
 - ✅ 无线电地图确定性（快衰落由点坐标派生固定种子）
-- ✅ getPointDateRate 多行输入守卫（会丢数据的隐患已封）
-- ✅ 轨迹层能稳定完成（done=[True,True]，两架都完成），但不反超贪心（DRL 固有限制），定位为"执行序列的组件"
+- ✅ **轨迹层 SCA 基线**（`trajectory/sca.py`）：传统优化（SQP + 平滑场），A2G 消融显示双图 vs G2A-only 时延 -11.7%
+- ✅ **ILD3（参数共享 TD3 + 双地图）是唯一能完成飞行任务的 DRL 方法**（all_done=True），三 CTDE 基线（MADDPG/MATD3/MAPPO）失败——但不反超贪心，定位为"执行器 + 算法对比"
 
 ## 训练历史与关键经验（重要，供后续会话参考）
 
@@ -148,12 +149,25 @@ docs/          specs(设计) + plans(计划)
 **DRL 探索（也失败）**：给 ILD3 状态加 rate/outage 观测 + 上行速率奖励（权重 1.0/0.3/门控），四个算法全部**无法完成任务**（times=[-1,-1]、makespan 500 截断），轨迹在高速率区**来回震荡**（大角度折返 ~40-52%），只有 TD3 系学会高速率（13.8-16.2 Mbps）。根因：raw rate/outage 非光滑（LoS 跳变）塞进状态 → 价值函数非光滑 → 策略振荡；速率奖励（即使门控）给"高速率区盘旋"留了 reward-hacking 漏洞。
 **轨迹层定位**：维持"执行序列的组件"弱贡献定位，论文重心在层1 聚类 + 层2 序列（有真实、可复现的收益）。
 
+### 实验8：轨迹层最终结论——时延口径修正 + A2G 消融 + DRL 定位（2026-10-06，最新）
+**时延口径修正（关键，推翻了实验7 的"边际收益"结论）**：实验7 用的轨迹层时延 `τ_k` 是"封顶的卸载耗时"（`min(data/rate, 航段时间)`），这个封顶把通信感知偏离的收益**藏起来了**。改为**传输时间 `τ_k = data/rate`（不封顶，与序列层一致）**后，收益显形。
+**重新标定**（让时延速率受限、通信感知有意义）：带宽 B=10→**1 MHz**、数据量 100-300→**10-30 Mbit**、τ_max 80→**12s**。
+**A2G 消融**（`use_a2g` 档位，核心亮点——A2G 上行地图是独创）：
+- SCA-双图 vs SCA-G2A：**时延 -11.7%**（289→255s）、速率 +3.6%（1.65→1.71）、违约率同为 40%——A2G 地图的价值显形。
+- 贪心（无地图）、SCA（G2A-only）、三个 DRL 基线（G2A-only）为对比方法；ILD3（双地图）为提出方法。
+**DRL 结果**（N=2、2000 集、新标定、确定性 rollout）：
+- **ILD3（参数共享 TD3 + 双地图）是唯一能完成飞行任务的 DRL 方法**（all_done=True、times=[670,790]、makespan 395）；三个 CTDE 基线 MADDPG/MATD3/MAPPO 全部失败（times=[-1,-1]）——参数共享的样本效率优势。
+- 但 ILD3 不反超贪心（速率 1.34 < 贪心 1.63、时延 316 > 284），即 DRL 学会了完成、没学会"趋向高速率区"。
+**DRL 通信感知奖励调不动（固有限制）**：平坦时延惩罚（`P_TRANS=10` 二值）→ 完成但不趋高速率；连续惩罚（∝违约幅度）→ 发散完不成。根因：速率场非光滑（LoS 跳变），DRL 对通信感知奖励强度极敏感——弱了没梯度、强了破坏完成。SCA（有完整地图、精确优化）能稳提速率，DRL（无地图、学 reward）做不到。
+**轨迹层定位（方案 A，最终）**：DRL（ILD3）定位为"**唯一能完成任务的 DRL 执行器 + 与 CTDE 基线的算法对比**"；"**通信感知偏离收益**"用 **SCA 双图 vs SCA-G2A 消融（-11.7% 时延）** 展示；论文重心仍在层1 聚类 + 层2 序列。
+
 ## 已知问题与待办
 
 1. 放量 N=3/4 的轨迹+端到端（低优先级，轨迹不反超贪心）
-2. tau_max/λ 灵敏度校准
+2. 序列层收益需在新标定（B=1、数据 10-30、τ_max=12）下重测（实验6 的 0.8%/23.5%/37% 是 B=10 + 数据 100-300 时代的）
 3. 地形分辨率 40m（step=101 可考虑 step=201）
-4. `compute_metrics` 死代码可删
+4. `compute_metrics`、`rural_world.py`、`entity.py` 死代码可删
+5. `run_all.py`/`run_end2end.py` 默认 `total_episode=300`，与文档的 2000 不一致
 
 ## 常用命令
 

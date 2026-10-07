@@ -23,7 +23,7 @@ from radio_map import radio_map_A2G, radio_map_G2A
 # 采样步长（100m 单位，沿用单机约定）
 STEP = 0.0915
 # A2G 带宽（Mbps）
-BANDWIDTH = 10.0   # A2G bandwidth (MHz); was 1.0 (too low -> huge delay)
+BANDWIDTH = 1.0    # A2G bandwidth (MHz)
 # 可卸载数据量下限，避免 τ = data_size·flight_time/C_ij 除零
 C_FLOOR = 1e-3
 # 默认 UAV 高度（100m 单位，即 100m → 0.1 km）

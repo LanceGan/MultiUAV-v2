@@ -76,7 +76,8 @@ def sca_rollout(env, policies, uav_traverse):
     }
 
 
-def run(uav_nums=(2, 3, 4), seed=42, log_dir=None, m=5, n_restarts=3):
+def run(uav_nums=(2, 3, 4), seed=42, log_dir=None, m=5, n_restarts=3,
+        use_a2g=False):
     log_dir = log_dir or _common.LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
     results = []
@@ -99,7 +100,8 @@ def run(uav_nums=(2, 3, 4), seed=42, log_dir=None, m=5, n_restarts=3):
                 policies.append(None)
                 continue
             path = plan_route(field, waypoints, data_per_segment, cfg,
-                              m=m, n_restarts=n_restarts, seed=seed + i)
+                              m=m, n_restarts=n_restarts, seed=seed + i,
+                              use_a2g=use_a2g)
             policies.append(SCAPolicy(path, cfg["length"], cfg["width"],
                                       cfg["v_max"]))
 
@@ -132,10 +134,12 @@ def main(argv=None):
     parser.add_argument("--m", type=int, default=5)
     parser.add_argument("--n_restarts", type=int, default=3)
     parser.add_argument("--log_dir", type=str, default=None)
+    parser.add_argument("--use_a2g", action="store_true",
+                        help="use the A2G uplink map (dual-map tier); default is G2A-only")
     args = parser.parse_args(argv)
     uav_nums = tuple(int(x) for x in args.uav_nums.split(",") if x.strip())
     return run(uav_nums=uav_nums, seed=args.seed, log_dir=args.log_dir,
-               m=args.m, n_restarts=args.n_restarts)
+               m=args.m, n_restarts=args.n_restarts, use_a2g=args.use_a2g)
 
 
 if __name__ == "__main__":

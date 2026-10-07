@@ -301,7 +301,7 @@ def _deterministic_reward(env, model, uav_traverse, n_agents):
 
 
 def train_maddpg(cfg, uav_traverse, total_episode=2000, model_subdir="MADDPG",
-                 model_dir=None, log_dir=None, log_every=10):
+                 model_dir=None, log_dir=None, log_every=10, use_a2g=True):
     """Train MADDPG on the injected traverse (unified algorithm interface).
 
     Returns ``{"ep_rewards": [...], "best_reward": float, "model": model}`` and
@@ -315,7 +315,7 @@ def train_maddpg(cfg, uav_traverse, total_episode=2000, model_subdir="MADDPG",
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    env = MultiUAVInspectionEnv(cfg, safe_distance=0.1)
+    env = MultiUAVInspectionEnv(cfg, safe_distance=0.1, use_a2g=use_a2g)
     env.set_uav_traverse(uav_traverse)
     local_state_dim = env.local_obs_dim
     action_dim = env.action_dim

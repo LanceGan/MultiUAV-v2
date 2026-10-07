@@ -95,9 +95,8 @@ P_COLLISION = 2.0           # max collision penalty (soft, proportional — a fl
 P_OUT_OF_BOUNDS = 1.0       # per-unit overshoot when leaving the region
 TIME_PENALTY = 1.0          # per-step time cost (encourages faster completion -> min makespan)
 TRAJ_OUTAGE_WEIGHT = 1.0    # trajectory outage penalty (moderate; sequence layer uses lambda_out=3.0 separately)
-RATE_REWARD_WEIGHT = 0.3    # offload reward weight (Mbit offloaded this step, gated on progress -> encourage high-rate flight)
 
-BANDWIDTH = 10.0            # A2G bandwidth (MHz); was 1.0 (too low -> huge delay); rate = B*log2(1+SINR) Mbps
+BANDWIDTH = 1.0             # A2G bandwidth (MHz); rate = B*log2(1+SINR) Mbps
 DEFAULT_UAV_H = 1.0         # 100 m altitude in 100 m units (-> 0.1 km for map)
 DEFAULT_ARRIVE_DIST = 0.5   # arrival radius in 100 m units (50 m, single-UAV)
 DEFAULT_T = 1000            # episode horizon in steps (aligned with single-UAV T=1000; 200 was a smoke value)
@@ -105,7 +104,7 @@ DEFAULT_T = 1000            # episode horizon in steps (aligned with single-UAV 
 
 class MultiUAVInspectionEnv(object):
     def __init__(self, cfg, safe_distance=0.1, points=None, data_sizes=None,
-                 uav_traverse=None, T=None, depot_spacing=0.5):
+                 uav_traverse=None, T=None, depot_spacing=0.5, use_a2g=True):
         self.cfg = cfg
         self.uav_num = int(cfg["uav_num"])
         self.user_num = int(cfg["user_num"])
@@ -125,6 +124,8 @@ class MultiUAVInspectionEnv(object):
         self.uav_h = DEFAULT_UAV_H
         self.arrive_dist = DEFAULT_ARRIVE_DIST
         self.T = int(T) if T is not None else int(cfg.get("T", DEFAULT_T))
+        # 地图档位：use_a2g=True 用双地图（G2A 中断 + A2G 上行时延惩罚）；False 只用 G2A。
+        self.use_a2g = bool(use_a2g)
 
         # Observation / action space sizes.
         self.local_obs_dim = 6 + 2 * (self.uav_num - 1)
@@ -218,6 +219,8 @@ class MultiUAVInspectionEnv(object):
         self._outage_duration = [0.0 for _ in range(self.uav_num)]
         self._rate_sum = [0.0 for _ in range(self.uav_num)]
         self._rate_steps = [0 for _ in range(self.uav_num)]
+        self._seg_rate_sum = [0.0 for _ in range(self.uav_num)]   # 当前段累计速率（算传输时延）
+        self._seg_rate_steps = [0 for _ in range(self.uav_num)]
         self._rate = [0.0 for _ in range(self.uav_num)]
         self._outage = [0.0 for _ in range(self.uav_num)]
         self._tau_history = [[] for _ in range(self.uav_num)]
@@ -367,12 +370,11 @@ class MultiUAVInspectionEnv(object):
             return 0.0
 
         reward = R_ARRIVE
-        # Delay-QoS: penalize if the previous point's data is still not fully
-        # offloaded AND its instantaneous remaining transmission time
-        # (data_buffer / rate at the current position) exceeds tau_max.
-        reward -= self._trans_penalty(i)
-        tau_k = (self._tau_done[i] if self._buffer_done[i]
-                 else self._offload_elapsed[i])
+        # 时延 = 传输时间 data_k / 段平均上行速率（不封顶，与序列层一致）。
+        data_k = self._data_for(i, k)
+        avg_rate = (self._seg_rate_sum[i] / self._seg_rate_steps[i]
+                    if self._seg_rate_steps[i] > 0 else 0.0)
+        tau_k = data_k / max(avg_rate, 1e-6)
         self._tau_history[i].append(float(tau_k))
 
         # Advance to the next target, pre-loading its data.
@@ -386,6 +388,8 @@ class MultiUAVInspectionEnv(object):
             self._done[i] = True
             self._data_buffer[i] = 0.0
             self._times[i] = self.t
+        self._seg_rate_sum[i] = 0.0
+        self._seg_rate_steps[i] = 0
         return reward
 
     # ------------------------------------------------------------------
@@ -422,12 +426,10 @@ class MultiUAVInspectionEnv(object):
             # Movement (out-of-bounds -> clip to boundary + small penalty).
             reward += self._move(i, v, theta)
 
-            progressing = False
             if dist_pre is not None:
                 uav = self.UAVs[i]
                 dist_cur = math.hypot(uav.x - target_pt[0], uav.y - target_pt[1])
                 raw_progress = dist_pre - dist_cur  # >0 靠近, <0 远离
-                progressing = raw_progress > 0.0
 
                 # 前进奖励（截断式，只奖励靠近不惩罚远离）
                 reward += 60.0 * max(0.0, raw_progress)
@@ -447,15 +449,18 @@ class MultiUAVInspectionEnv(object):
             prev_buffer = self._data_buffer[i]
             rate = self._offload(i, self.delta_t)
             self._offloaded[i] += prev_buffer - self._data_buffer[i]
-            # 上行速率奖励：仅在朝目标前进时给予，防止在高速率区打转刷奖励。
-            if progressing:
-                reward += RATE_REWARD_WEIGHT * (prev_buffer - self._data_buffer[i])
             self._rate_sum[i] += rate
             self._rate_steps[i] += 1
+            self._seg_rate_sum[i] += rate
+            self._seg_rate_steps[i] += 1
             self._offload_elapsed[i] += self.delta_t
             if not self._buffer_done[i] and self._data_buffer[i] <= 0.0:
                 self._buffer_done[i] = True
                 self._tau_done[i] = self._offload_elapsed[i]
+            # A2G 上行时延 QoS 惩罚（连续，仅双地图档）：瞬时传输时延超限则罚，
+            # 引导 DRL 走高上行速率区以降低时延（约束型惩罚，不可"打转刷分"）。
+            if self.use_a2g:
+                reward -= self._trans_penalty(i)
 
             # 下行通信质量
             outage = self._get_g2a_outage(i)
