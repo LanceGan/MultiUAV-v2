@@ -150,3 +150,52 @@ def evaluate_solution(scenario, library, solution, field, keep_timelines=True):
         outage_ratio=outage_ratio, violations=violations, timelines=timelines,
         objective=objective,
     )
+
+
+def objective(result, t_ref, d_ref, w_t, w_d):
+    """Normalized objective ``w_t*T/T_ref + w_d*D/D_ref``."""
+    return w_t * result.makespan_s / t_ref + w_d * result.total_delay_s / d_ref
+
+
+def feasibility_rank(result):
+    """Lexicographic feasibility rank (lower is better), §7.2."""
+    v = result.violations
+    return (v.unserved_tasks, v.upload_failures, v.outage_excess,
+            v.deadline_exceeded, v.wait_exceeded, result.objective)
+
+
+def _direct_candidate(library, src, tgt):
+    from segment.stc.slsqp_refine import candidate_cost
+    cands = library[(src, tgt)]
+    return min(cands, key=lambda c: candidate_cost(c, 0.5))
+
+
+def compute_reference(scenario, library):
+    """Reference (T_ref, D_ref) from a greedy NN route split into n_uav groups."""
+    from segment.stc.slsqp_refine import candidate_cost
+    order = []
+    remaining = list(range(scenario.n_tasks))
+    cur = np.asarray(scenario.depot_m, float)
+    while remaining:
+        nxt = min(remaining, key=lambda j: float(np.linalg.norm(
+            np.asarray(scenario.task_positions_m[j]) - cur)))
+        order.append(nxt)
+        cur = np.asarray(scenario.task_positions_m[nxt])
+        remaining.remove(nxt)
+
+    max_flight = 0.0
+    total_upload = 0.0
+    for g in np.array_split(order, scenario.n_uav):
+        g = list(g)
+        if not g:
+            continue
+        seq = [(-1, g[0])] + [(g[i], g[i + 1]) for i in range(len(g) - 1)] + [(g[-1], scenario.n_tasks)]
+        ft = 0.0
+        up = 0.0
+        for src, tgt in seq:
+            c = _direct_candidate(library, src, tgt)
+            ft += c.flight_steps * scenario.limits.delta_t_s
+            up += c.source_data_bits / max(float(np.mean(c.full_rate_bps.max(axis=1))), 1e-9)
+        max_flight = max(max_flight, ft)
+        total_upload += up
+    return float(max_flight), float(total_upload)
