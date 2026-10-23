@@ -1,0 +1,6 @@
+{
+  "map_seeds": [42, 43, 44],
+  "task_seeds": [42, 43, 44],
+  "method_seeds": [0, 1, 2, 3, 4],
+  "train_seeds": [42]
+}
