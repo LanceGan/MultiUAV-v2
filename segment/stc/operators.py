@@ -27,6 +27,8 @@ def _greedy_nn_order(scenario):
 
 
 def _edges(route, K):
+    if not route:
+        return [(-1, K)]  # empty route: depot -> terminal directly
     return ([(-1, route[0])]
             + [(route[i], route[i + 1]) for i in range(len(route) - 1)]
             + [(route[-1], K)])

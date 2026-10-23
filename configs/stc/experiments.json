@@ -1,0 +1,14 @@
+{
+  "solver": {
+    "rho": 0.1,
+    "T0": 0.1,
+    "cooling": 0.995,
+    "segment": 100,
+    "iterations": 1000
+  },
+  "score": {
+    "new_best": 3.0,
+    "improve": 1.0,
+    "accept": 0.5
+  }
+}

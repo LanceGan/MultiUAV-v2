@@ -35,9 +35,12 @@ def evaluate_solution(scenario, library, solution, field, keep_timelines=True):
     for u in range(n_uav):
         route = solution.routes[u]
         cids = solution.candidate_ids[u]
-        edges = ([(-1, route[0])]
-                 + [(route[i], route[i + 1]) for i in range(len(route) - 1)]
-                 + [(route[-1], K)])
+        if route:
+            edges = ([(-1, route[0])]
+                     + [(route[i], route[i + 1]) for i in range(len(route) - 1)]
+                     + [(route[-1], K)])
+        else:
+            edges = [(-1, K)]  # empty route: depot -> terminal directly
         seq = []
         for e, (src, tgt) in enumerate(edges):
             cand = next(c for c in library[(src, tgt)] if c.candidate_id == cids[e])
