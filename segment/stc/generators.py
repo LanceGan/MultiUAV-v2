@@ -49,19 +49,9 @@ def _trace(scenario, field, src_m, tgt_m, data_bits, via=()):
         fly.extend(leg if not fly else leg[1:])
 
     hold_position = fly[-1] if fly else pts[0]
-    uploaded = 0.0
-    for pos in fly:
-        s = field.sample(pos)
-        uploaded += float(np.max(s.a2g_efficiency)) * limits.bandwidth_hz * limits.delta_t_s
-    remaining = max(0.0, data_bits - uploaded)
-    hold_steps = 0
-    if remaining > 0.0:
-        s = field.sample(hold_position)
-        r = float(np.max(s.a2g_efficiency)) * limits.bandwidth_hz
-        if r > 0.0:
-            hold_steps = int(np.ceil(remaining / (r * limits.delta_t_s)))
-
-    positions = fly + [hold_position] * hold_steps + [pts[-1]]
+    # flight trace ends at the hold point; the final connector enters the anchor.
+    # The hold itself is contention-dependent and added by the evaluator (Task 6).
+    positions = fly + [pts[-1]]
     return positions, hold_position
 
 
