@@ -54,6 +54,7 @@ class SegmentCandidate:
     flight_steps: int
     hold_position_m: tuple
     source_data_bits: float
+    rankable: bool = True   # False for relaxation references (never ranked)
 
     def __post_init__(self):
         T = len(self.positions_m)
