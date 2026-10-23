@@ -1,6 +1,8 @@
 .vscode/
 __pycache__/
 *.pyc
-results/models/
 results/logs/
-results/figs/
+
+
+# STC transient run artifacts (renamed on success, left behind on crash)
+results/runs/**/.tmp-*
