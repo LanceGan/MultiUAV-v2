@@ -56,6 +56,7 @@ def evaluate_solution(scenario, library, solution, field, keep_timelines=True):
     outage_time = [0.0] * n_uav
     air_time = [0.0] * n_uav
     upload_time = [0.0] * n_uav
+    timelines = [[] for _ in range(n_uav)]
 
     unserved = K
     deadline_exceeded = 0
@@ -109,6 +110,15 @@ def evaluate_solution(scenario, library, solution, field, keep_timelines=True):
                 buf[u] = max(0.0, buf[u] - rate * dt)
                 upload_time[u] += dt
 
+        # record per-slot state for conflict attribution: (time, sector, buffer, alloc, full_rate)
+        for u in range(n_uav):
+            if airborne[u] and not done[u]:
+                cand = uav_cands[u][edge[u]]
+                fr = cand.full_rate_bps[tidx[u]]
+                sec = sectors[u]
+                alloc = limits.bandwidth_hz / co.get(sec, 1) if active[u] else 0.0
+                timelines[u].append((n * dt, sec, buf[u], alloc, float(fr[sec])))
+
         # 6. service events
         for u in range(n_uav):
             if airborne[u] and not done[u]:
@@ -143,7 +153,7 @@ def evaluate_solution(scenario, library, solution, field, keep_timelines=True):
         wait_exceeded=wait_exceeded,
     )
 
-    timelines = tuple([] for _ in range(n_uav))
+    timelines = tuple(tuple(t) for t in timelines)
     objective = (limits.w_t * makespan + limits.w_d * total_delay) if feasible else float("inf")
     return EvaluationResult(
         feasible=feasible, makespan_s=makespan, total_delay_s=total_delay,
