@@ -69,11 +69,22 @@ class STCALNS:
                 chosen.append(l)
             new_res = cache.evaluate_after_move(new, frozenset(range(self.scenario.n_uav)))
 
-            # feasibility-first acceptance
-            better = (not cur_res.feasible and new_res.feasible) or (
-                cur_res.feasible == new_res.feasible and new_res.objective < cur_res.objective)
-            accept = better or (cur_res.feasible == new_res.feasible
-                                and rng.rand() < np.exp(-(new_res.objective - cur_res.objective) / max(T, 1e-9)))
+            # feasibility-first acceptance via lexicographic rank (spec §7.7):
+            # a feasibility-level improvement is always accepted; at the same
+            # level (both feasible), SA on the objective.  Infeasible->infeasible
+            # at the same level is rejected (no finite objective to compare).
+            cur_rank = feasibility_rank(cur_res)[:5]
+            new_rank = feasibility_rank(new_res)[:5]
+            better = new_rank < cur_rank
+            same_level = new_rank == cur_rank
+            if better:
+                accept = True
+            elif same_level and cur_res.feasible:
+                dj = new_res.objective - cur_res.objective
+                better = dj < 0.0
+                accept = better or rng.rand() < np.exp(-dj / max(T, 1e-9))
+            else:
+                accept = False
             score = 0.0
             if accept:
                 is_new_best = (new_res.feasible and

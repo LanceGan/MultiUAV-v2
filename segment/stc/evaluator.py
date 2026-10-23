@@ -53,6 +53,9 @@ def evaluate_solution(scenario, library, solution, field, keep_timelines=True):
     edge = [0] * n_uav
     tidx = [0] * n_uav
     buf = [0.0] * n_uav
+    # departure_steps are in departure_step_s units; convert to slot indices
+    departure_slots = [int(round(solution.departure_steps[u] * limits.departure_step_s / dt))
+                       for u in range(n_uav)]
     completion = [None] * n_uav
     hold_time = [0.0] * n_uav
     edge_hold = [0.0] * n_uav
@@ -68,7 +71,7 @@ def evaluate_solution(scenario, library, solution, field, keep_timelines=True):
     for n in range(max_slots):
         # 1. activate
         for u in range(n_uav):
-            if not airborne[u] and not done[u] and solution.departure_steps[u] <= n:
+            if not airborne[u] and not done[u] and departure_slots[u] <= n:
                 airborne[u] = True
 
         # 2. advance / hold

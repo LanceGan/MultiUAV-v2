@@ -47,7 +47,8 @@ def _plan(routes, scenario, library, departure_steps):
 def build_initial_solution(scenario, library, seed=42):
     """Greedy NN single route split into n_uav groups; cheapest candidate per edge."""
     order = _greedy_nn_order(scenario)
-    groups = [list(g) for g in np.array_split(order, scenario.n_uav) if len(g) > 0]
+    # keep exactly n_uav groups (some empty when n_tasks < n_uav)
+    groups = [list(g) for g in np.array_split(order, scenario.n_uav)]
     routes = tuple(tuple(g) for g in groups)
     return _plan(routes, scenario, library, tuple([0] * len(routes)))
 

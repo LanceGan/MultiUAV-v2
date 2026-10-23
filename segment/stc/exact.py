@@ -49,6 +49,7 @@ def solve_exact_tiny(scenario, library, field, departure_set=(0,), max_tasks=8,
     best_sol = None
     best_res = None
     explored = 0
+    timed_out = False
 
     for assign in itertools.product(range(U), repeat=K):
         routes = [[] for _ in range(U)]
@@ -59,14 +60,19 @@ def solve_exact_tiny(scenario, library, field, departure_set=(0,), max_tasks=8,
             ordered = [list(c) for c in combo]
             for dep in itertools.product(departure_set, repeat=U):
                 if time.time() - start > time_limit_s:
+                    timed_out = True
                     break
                 sol = _plan_for_routes(ordered, scenario, library, dep)
                 res = evaluate_solution(scenario, library, sol, field)
                 explored += 1
                 if res.feasible and (best_res is None or res.objective < best_res.objective):
                     best_sol, best_res = sol, res
+            if timed_out:
+                break
+        if timed_out:
+            break
 
-    proven = (time.time() - start) <= time_limit_s
+    proven = not timed_out
     if best_sol is None:
         # no feasible solution found; return an empty incumbent
         empty = PlanSolution(routes=tuple(() for _ in range(U)),
