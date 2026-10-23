@@ -146,5 +146,12 @@ class STCScenario:
     depot_m: tuple
     terminal_m: tuple
     limits: ScenarioLimits
+    length_m: float            # region extent (metres)
+    width_m: float
+    n_bs: int                  # number of base stations
     task_seed: int
     map_seed: int
+
+    @property
+    def n_sectors(self):
+        return self.n_bs * 3   # three antenna sectors per BS

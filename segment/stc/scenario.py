@@ -50,6 +50,9 @@ def load_stc_scenario(uav_num, *, task_seed, map_seed, config_path=None):
         depot_m=depot_m,
         terminal_m=terminal_m,
         limits=_load_limits(config_path),
+        length_m=float(cfg["length"]) * 100.0,
+        width_m=float(cfg["width"]) * 100.0,
+        n_bs=len(cfg["bs_loc"]),
         task_seed=int(task_seed),
         map_seed=int(map_seed),
     )

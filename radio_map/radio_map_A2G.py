@@ -7,51 +7,87 @@ from scipy.ndimage import gaussian_filter
 # 3GPP Rural Macro (RMa) Building Distribution Model
 # ================================
 
-D = 4  # 区域边长 D x D km²（4km×4km 场景，对齐 config 单位约定：坐标/10 转 km）
+D = 4  # 默认区域边长 D x D km²（通过 set_region 可配置；对齐 config 单位约定：坐标/10 转 km）
 step = 101  # 分辨率为 D / (step-1) km
 
-# ============== 生成山地区域地形（平滑高斯噪声） ==============
-np.random.seed(42)
-terrain_noise = np.random.randn(D * step, D * step) * 15  # 模拟地形起伏，尺度可调
-terrain_height = gaussian_filter(terrain_noise, sigma=10)  # 平滑以模拟连贯的山形
-terrain_height = np.clip(terrain_height, 0, 60)  # 限制山地高度范围在0-60m之间
+# ============== 乡村建筑参数（与区域大小无关） ==============
+ALPHA = 0.12  # 建筑物占地系数（乡村更稀疏：0.2→0.12）
+BETA = 100    # 建筑物密度参数（乡村：更多更小，Side≈35m）
+GAMA = 6      # 建筑物高度分布（乡村低矮：Rayleigh 中位 ~7m）
+MAXHeight = 12
+MINHeight = 4
 
-# ============== 生成建筑物（稀疏） ==============
-ALPHA = 0.2  # 建筑物占地系数
-BETA = 50    # 建筑物密度参数（适度减少以符合RMa）
-GAMA = 30    # 建筑物高度分布
-MAXHeight = 40
-MINHeight = 5
+# 基站位置（作为 D 的比例，随区域/基站数量缩放；Bug 3 修复：不再硬编码 4km 坐标）
+# N=2/3/4 → 4/5/6 个基站（密度约恒定，保持中断率可比）
+_BS_FRAC = {
+    4: [[0.2385, 0.228], [0.7445, 0.2445], [0.2315, 0.689], [0.674, 0.7445]],  # 原 SingleUAV 2×2
+    5: [[0.2385, 0.228], [0.7445, 0.2445], [0.2315, 0.689], [0.674, 0.7445], [0.5, 0.5]],  # 四角 + 中心
+    6: [[0.2, 0.3], [0.5, 0.3], [0.8, 0.3], [0.2, 0.7], [0.5, 0.7], [0.8, 0.7]],  # 2×3 网格
+}
 
-N = int(BETA * (D ** 2))  # 建筑总数
-A = ALPHA * (D ** 2) / N  # 平均每栋建筑的占地面积 (km²)
-Side = np.sqrt(A)  # 每栋建筑占地边长 (km)
+BS_loc = None
+terrain_height = None
+HeightMapMatrix = None
+HeighMapArray = None
 
-# 建筑物高度采样
-np.random.seed(1)
-H_vec = np.random.rayleigh(GAMA, N)
-H_vec = np.clip(H_vec, MINHeight, MAXHeight)
 
-# 建筑物中心位置（均匀随机分布）
-XLOC = np.random.uniform(0, D, N)
-YLOC = np.random.uniform(0, D, N)
+def set_region(D_km, n_bs=4, map_seed=None):
+    """按区域边长 D_km (km) 重新生成地形/建筑/基站。
 
-# ============== 构建最终高度图 ==============
-HeightMapMatrix = terrain_height.copy()
-HeighMapArray = HeightMapMatrix.reshape(1, (D * step) ** 2) # (1,10201)
-for i in range(N):
-    x1 = int(np.clip(np.floor((XLOC[i] - Side / 2) * (step - 1) / D), 0, step - 1))
-    x2 = int(np.clip(np.ceil((XLOC[i] + Side / 2) * (step - 1) / D), 0, step - 1))
-    y1 = int(np.clip(np.floor((YLOC[i] - Side / 2) * (step - 1) / D), 0, step - 1))
-    y2 = int(np.clip(np.ceil((YLOC[i] + Side / 2) * (step - 1) / D), 0, step - 1))
-    HeightMapMatrix[x1:x2 + 1, y1:y2 + 1] += H_vec[i]
+    ``map_seed`` 显式控制地形/建筑随机性（None = 保持旧默认 42/1）；使用局部
+    ``RandomState``，不修改全局 NumPy RNG。更新 ``D`` / ``BS_loc`` / ``HeighMapArray``
+    / ``terrain_height``；checkLoS / getPointOutageMatrix 自动使用新区域。
+    """
+    global D, BS_loc, terrain_height, HeightMapMatrix, HeighMapArray
+
+    D = int(D_km)  # 区域边长须为整数（D*step 作为数组尺寸）
+
+    if map_seed is None:
+        terrain_seed, build_seed = 42, 1   # 旧默认，保持可复现
+    else:
+        terrain_seed, build_seed = int(map_seed), int(map_seed) + 1
+    rng_t = np.random.RandomState(terrain_seed)
+    rng_b = np.random.RandomState(build_seed)
+
+    # ============== 生成偏远乡村地形（平缓丘陵，起伏 0~50m） ==============
+    terrain_noise = rng_t.randn(D * step, D * step)
+    terrain_height = gaussian_filter(terrain_noise, sigma=20)  # 平滑成 ~200m 尺度的连绵丘陵
+    terrain_height = (terrain_height - terrain_height.min()) / (terrain_height.max() - terrain_height.min())
+    terrain_height = terrain_height * 50.0  # 丘陵起伏 0~50m
+
+    # ============== 生成乡村建筑（稀疏低矮，4~12m） ==============
+    N = int(BETA * (D ** 2))           # 建筑总数
+    A = ALPHA * (D ** 2) / N           # 平均每栋建筑占地面积 (km²)
+    Side = np.sqrt(A)                  # 每栋建筑占地边长 (km)
+
+    H_vec = np.clip(rng_b.rayleigh(GAMA, N), MINHeight, MAXHeight)  # 建筑高度采样
+    XLOC = rng_b.uniform(0, D, N)  # 建筑中心位置（均匀随机）
+    YLOC = rng_b.uniform(0, D, N)
+
+    # ============== 构建最终高度图（地形 + 建筑，重叠取最高不累加） ==============
+    BuildingLayer = np.zeros((D * step, D * step))
+    for i in range(N):
+        x1 = int(np.clip(np.floor((XLOC[i] - Side / 2) * (step - 1)), 0, D * (step - 1)))
+        x2 = int(np.clip(np.ceil((XLOC[i] + Side / 2) * (step - 1)), 0, D * (step - 1)))
+        y1 = int(np.clip(np.floor((YLOC[i] - Side / 2) * (step - 1)), 0, D * (step - 1)))
+        y2 = int(np.clip(np.ceil((YLOC[i] + Side / 2) * (step - 1)), 0, D * (step - 1)))
+        BuildingLayer[x1:x2 + 1, y1:y2 + 1] = np.maximum(BuildingLayer[x1:x2 + 1, y1:y2 + 1], H_vec[i])
+    HeightMapMatrix = terrain_height + BuildingLayer
+    HeighMapArray = HeightMapMatrix.reshape(1, (D * step) ** 2)
+
+    # ============== 基站（随 D 与基站数缩放） ==============
+    _frac = np.asarray(_BS_FRAC[n_bs], dtype=float)
+    BS_loc = np.column_stack([_frac * D, np.full(n_bs, 0.025)])
+
+
+set_region(4)  # 默认 4km×4km 区域（N=2）
     
 
-BS_loc=np.array([[0.954,0.912,0.025],[2.978,0.978,0.025],[0.926,2.756,0.025],[2.696,2.978,0.025]]) # 4kmx4km area, 4 BSs
+# BS_loc 已改为在 set_region() 内按 D 缩放生成（Bug 3 修复）
 # BS_loc=np.array([[1, 1, 0.025], [1.5774,1.333, 0.025], [1, 1.6667,0.025,], [0.4226,1.3333,  0.025],
 #                [0.4226, 0.6667,  0.025], [1, 0.3333, 0.025], [1.5774,0.6667,  0.025]]) # 2km
 BS_thetaD = 120  # The downtile angle in degree [0, 180]
-PB = 0.1 # UAV 传输功率
+PB = 0.2 # UAV 传输功率（0.2W=23dBm，折中：保留部分上行瓶颈使时延有意义，又缓解 6km 区域过弱）
 Fc = 2  # Operating Frequency in GHz
 SIR_THRESHOLD=3 #SIR threshold in dB for outage
 
@@ -144,7 +180,7 @@ def getPointOutageMatrix(PointLoc,SIR_th):
         for sector in range(Sec_num):
             SignalFromThisSector=SignalFromThisBS[:,sector]
             #--------------------主要改这一项-----------------------# 
-            SIR=SignalFromThisSector/(10 ** ((-100 - 30) / 10)) # dB
+            SIR=SignalFromThisSector/(10 ** ((-100 - 30) / 10)) # SNR; 噪声底 -100 dBm（对齐 SingleUAV 单机代码）
             SIR_dB=10*np.log10(SIR)
             SIR_dB_avg[i, sector] = np.sum(SIR_dB) / len(SIR_dB)
             # print(np.sum(SIR_dB<SIR_th))
@@ -216,7 +252,7 @@ def getLargeScalePowerFromBS(PointLoc, BS, Theta_deg, Phi_deg, LoS, Fc=2.0, H_u=
 # Hence, we return multiple fast fading coefficients. The number of samples is determined by FastFadingSampleSize
 # A simple fast-fading implementation: if LoS, Rician fading with K factor 15 dB; otherwise, Rayleigh fading
 def getReceivedPower_RicianAndRayleighFastFading(PointLoc, BS, LoS):
-    HorizonDistance = np.sqrt((BS[0] - PointLoc[0]) ** 2 + (BS[1] - PointLoc[1]) ** 2)
+    HorizonDistance = np.sqrt((BS[0] - PointLoc[0]) ** 2 + (BS[1] - PointLoc[1]) ** 2) + 1e-9  # 防 UAV 正上方除零
     Theta = np.arctan((BS[2] - PointLoc[2]) / HorizonDistance)  # elevation angle
     Theta_deg = np.rad2deg(Theta) + 90  # convert to the (0,180) degree
     if (PointLoc[1] == BS[1]) & (PointLoc[0] == BS[0]):
@@ -293,7 +329,7 @@ def checkLoS(PointLoc, BS):
     YRange = [max(x, 0) for x in YRange]  # remove the negative idex
     Idx_vec = np.int_((np.array(XRange) * D * step + np.array(YRange))) # 高度数组里的下标
     SelectedHeight = [HeighMapArray[0, i] for i in Idx_vec]  # 比较高度
-    if any([x > y for (x, y) in zip(SelectedHeight, ZSample)]): # 建筑物高度大于样点高度
+    if any([x > y * 1000 for (x, y) in zip(SelectedHeight, ZSample)]): # 建筑物高度(m)大于样点高度(km→m)
         # print("NLoS")
         return False
     else:
