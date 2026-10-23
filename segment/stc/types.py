@@ -78,10 +78,9 @@ class PlanSolution:
     departure_steps: tuple   # tuple of int departure-step indices per UAV
 
     def __post_init__(self):
-        flat = sorted(t for r in self.routes for t in r)
-        K = len(flat)
-        if flat != list(range(K)):
-            raise ValueError("every task must appear exactly once")
+        flat = [t for r in self.routes for t in r]
+        if len(flat) != len(set(flat)):
+            raise ValueError("tasks must appear at most once (no duplicates)")
 
 
 @dataclass(frozen=True)
