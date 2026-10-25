@@ -52,12 +52,15 @@ def paired_summary(a, b, confidence=0.95, permutations=10000, seed=0):
     return PairedSummary(mean_diff, median_diff, std_diff, ci_low, ci_high, p_value, n)
 
 
-def hierarchical_paired_summary(records, scenario_keys=("map_seed", "task_seed"),
+def hierarchical_paired_summary(records, method_a, method_b,
+                                scenario_keys=("map_seed", "task_seed"),
                                 replicate_key="method_seed"):
-    """Aggregate replicates within each scenario, then compare methods A/B."""
+    """Aggregate replicates within each scenario, then pair method_a vs method_b."""
     # records: list of dicts with metric + scenario_keys + replicate_key + "method"
     groups = {}
     for r in records:
+        if r["method"] not in (method_a, method_b):
+            continue
         key = tuple(r[k] for k in scenario_keys) + (r["method"],)
         groups.setdefault(key, []).append(r["metric"])
 
@@ -68,11 +71,9 @@ def hierarchical_paired_summary(records, scenario_keys=("map_seed", "task_seed")
     a_vals, b_vals = [], []
     for scen in sorted(scen_means):
         methods = scen_means[scen]
-        names = sorted(methods)
-        if len(names) != 2:
-            continue
-        a_vals.append(methods[names[0]])
-        b_vals.append(methods[names[1]])
+        if method_a in methods and method_b in methods:
+            a_vals.append(methods[method_a])
+            b_vals.append(methods[method_b])
     if not a_vals:
         return None
     return paired_summary(a_vals, b_vals)

@@ -47,5 +47,5 @@ def test_hierarchical_aggregates_replicates():
                          "method": "A", "metric": 10.0 + scen})
             recs.append({"map_seed": 0, "task_seed": scen, "method_seed": rep,
                          "method": "B", "metric": 9.0 + scen})
-    s = hierarchical_paired_summary(recs)
+    s = hierarchical_paired_summary(recs, "A", "B")
     assert s.mean_diff == pytest.approx(1.0)

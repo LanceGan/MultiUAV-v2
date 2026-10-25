@@ -54,10 +54,25 @@ def build_library(scenario, field, generators, pareto_kwargs=None):
 
 
 def save_library(library, scenario, world_hash, path):
-    """Persist the library (metadata JSON + per-edge candidate arrays NPZ)."""
+    """Persist the library: metadata JSON + per-candidate array NPZ."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     meta = {"world_hash": world_hash, "task_seed": scenario.task_seed,
-            "map_seed": scenario.map_seed, "n_edges": len(library)}
+            "map_seed": scenario.map_seed, "n_edges": len(library), "schema": 1}
+    keys = []
+    arrays = {}
+    for (src, tgt), cands in library.items():
+        for c in cands:
+            key = "%d_%d_%s" % (src, tgt, c.candidate_id)
+            keys.append([src, tgt, c.candidate_id, c.generator, c.source, c.target,
+                         c.flight_steps, list(c.hold_position_m),
+                         float(c.source_data_bits), bool(c.rankable)])
+            arrays[key + "_pos"] = np.asarray(c.positions_m)
+            arrays[key + "_rate"] = np.asarray(c.full_rate_bps)
+            arrays[key + "_sector"] = np.asarray(c.sector_ids)
+            arrays[key + "_outage"] = np.asarray(c.g2a_outage)
+    if arrays:
+        np.savez(path, **arrays)
+    meta["keys"] = keys
     meta_path = path + ".json"
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
@@ -65,8 +80,19 @@ def save_library(library, scenario, world_hash, path):
 
 
 def load_library(path):
-    """Load a saved library (placeholder; raises for missing metadata)."""
-    meta_path = path + ".json"
-    with open(meta_path, encoding="utf-8") as f:
+    """Load a persisted library back into a ``SegmentLibrary``."""
+    from segment.stc.types import SegmentCandidate, SegmentLibrary
+    with open(path + ".json", encoding="utf-8") as f:
         meta = json.load(f)
-    return meta
+    arrs = np.load(path)
+    library = {}
+    for (src, tgt, cid, gen, source, target, flight_steps, hold, bits, rankable) in meta["keys"]:
+        key = "%d_%d_%s" % (src, tgt, cid)
+        library.setdefault((src, tgt), []).append(SegmentCandidate(
+            candidate_id=cid, source=source, target=target, generator=gen,
+            positions_m=arrs[key + "_pos"], full_rate_bps=arrs[key + "_rate"],
+            sector_ids=arrs[key + "_sector"], g2a_outage=arrs[key + "_outage"],
+            flight_steps=flight_steps, hold_position_m=tuple(hold),
+            source_data_bits=bits, rankable=rankable))
+    return SegmentLibrary(candidates=library, map_seed=meta["map_seed"],
+                          task_seed=meta["task_seed"], world_hash=meta["world_hash"])

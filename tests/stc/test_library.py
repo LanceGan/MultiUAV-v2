@@ -32,3 +32,17 @@ def test_pareto_prune_removes_strictly_dominated():
                        and (costs[j][0] < costs[i][0] or costs[j][1] < costs[i][1]))
                 assert not dom
     assert len(pruned) <= 10
+
+
+def test_library_round_trip_preserves_candidates(tmp_path):
+    from segment.stc.library import load_library, save_library
+    sc, _, cands = _cands()
+    lib = {(0, 1): tuple(cands[:3])}
+    world_hash = "test-hash"
+    path = str(tmp_path / "lib.npz")
+    save_library(lib, sc, world_hash, path)
+    loaded = load_library(path)
+    assert loaded.world_hash == world_hash
+    assert len(loaded.candidates[(0, 1)]) == 3
+    np.testing.assert_array_equal(loaded.candidates[(0, 1)][0].positions_m, cands[0].positions_m)
+    np.testing.assert_array_equal(loaded.candidates[(0, 1)][0].full_rate_bps, cands[0].full_rate_bps)
