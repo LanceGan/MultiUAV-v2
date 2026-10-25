@@ -104,7 +104,8 @@ DEFAULT_T = 1000            # episode horizon in steps (aligned with single-UAV 
 
 class MultiUAVInspectionEnv(object):
     def __init__(self, cfg, safe_distance=0.1, points=None, data_sizes=None,
-                 uav_traverse=None, T=None, depot_spacing=0.5, use_a2g=True):
+                 uav_traverse=None, T=None, depot_spacing=0.5, use_a2g=True,
+                 use_comm=True):
         self.cfg = cfg
         self.uav_num = int(cfg["uav_num"])
         self.user_num = int(cfg["user_num"])
@@ -126,6 +127,8 @@ class MultiUAVInspectionEnv(object):
         self.T = int(T) if T is not None else int(cfg.get("T", DEFAULT_T))
         # 地图档位：use_a2g=True 用双地图（G2A 中断 + A2G 上行时延惩罚）；False 只用 G2A。
         self.use_a2g = bool(use_a2g)
+        # 通信惩罚开关：use_comm=False 时关闭 G2A 中断 + A2G 时延两个通信惩罚项（纯完成实验）。
+        self.use_comm = bool(use_comm)
 
         # Observation / action space sizes.
         self.local_obs_dim = 6 + 2 * (self.uav_num - 1)
@@ -431,8 +434,8 @@ class MultiUAVInspectionEnv(object):
                 dist_cur = math.hypot(uav.x - target_pt[0], uav.y - target_pt[1])
                 raw_progress = dist_pre - dist_cur  # >0 靠近, <0 远离
 
-                # 前进奖励（截断式，只奖励靠近不惩罚远离）
-                reward += 60.0 * max(0.0, raw_progress)
+                # 前进奖励（对称：靠近奖励、远离等量惩罚，消除"靠近—远离"套利）
+                reward += 60.0 * raw_progress
                 # 势能差塑形：全程平滑指向目标的梯度
                 reward += 35.0 * (1.0 / (dist_cur + 1.0) - 1.0 / (dist_pre + 1.0))
 
@@ -457,16 +460,16 @@ class MultiUAVInspectionEnv(object):
             if not self._buffer_done[i] and self._data_buffer[i] <= 0.0:
                 self._buffer_done[i] = True
                 self._tau_done[i] = self._offload_elapsed[i]
-            # A2G 上行时延 QoS 惩罚（连续，仅双地图档）：瞬时传输时延超限则罚，
-            # 引导 DRL 走高上行速率区以降低时延（约束型惩罚，不可"打转刷分"）。
-            if self.use_a2g:
+            # A2G 上行时延 QoS 惩罚（仅双地图档且 use_comm 开启）。
+            if self.use_comm and self.use_a2g:
                 reward -= self._trans_penalty(i)
 
-            # 下行通信质量
+            # 下行通信质量（use_comm=False 时不进奖励，只记指标）
             outage = self._get_g2a_outage(i)
             self._outage[i] = outage
             self._outage_duration[i] += outage * self.delta_t
-            reward -= TRAJ_OUTAGE_WEIGHT * outage
+            if self.use_comm:
+                reward -= TRAJ_OUTAGE_WEIGHT * outage
 
             # 碰撞惩罚
             reward += self._collision_penalty(i)

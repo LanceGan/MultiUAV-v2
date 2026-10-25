@@ -61,7 +61,7 @@ def plot():
     axes[1].legend()
     axes[1].grid(alpha=0.3)
 
-    fig.suptitle("四种 MARL 算法训练奖励对比（N=2, 2000 集，通信感知观测）")
+    fig.suptitle("四种 MARL 算法训练奖励对比（N=2, 2000 集，通信感知，奖励修复后）")
     fig.tight_layout()
     out = os.path.join(FIGS_DIR, "marl_reward_compare.png")
     fig.savefig(out, dpi=150, bbox_inches="tight")

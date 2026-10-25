@@ -1,0 +1,57 @@
+{
+  "date": "2026-10-23",
+  "note": "PB=0.2W 原型版（区域4/5/6km+基站4/5/6）。N=2/3可行，N=4 inf（TD3 best_score=-inf）。闭环评价器 closed_loop.py 已实现并测试。",
+  "config": {
+    "PB_A2G": 0.2,
+    "region_km": [
+      4,
+      5,
+      6
+    ],
+    "n_bs": [
+      4,
+      5,
+      6
+    ],
+    "eps_out": 0.35,
+    "episodes": 3000
+  },
+  "results": {
+    "held_out": {
+      "N2_TD3": 89.3,
+      "N2_DDPG": 85.7,
+      "N2_SAC": 92.9,
+      "N3": 86.6,
+      "N4": 69.2
+    },
+    "edge_feasible": {
+      "N2": 96.4,
+      "N3": 96.2,
+      "N4": 66.8
+    },
+    "ALNS_obj": {
+      "N2": 0.7344,
+      "N3": 0.8598,
+      "N4": "inf"
+    },
+    "compare_N2_delay": "14.8 vs greedy 18.0 (-17.8%)",
+    "closed_loop_N2": {
+      "makespan": 327.5,
+      "delay": 266.0,
+      "factor": 1.07
+    }
+  },
+  "files": {
+    "radio_map/radio_map_A2G.py": "81b8c7989cf10627",
+    "radio_map/radio_map_G2A.py": "d6f4b83af1a4c47b",
+    "segment/env.py": "7dee17f508eae6f3",
+    "segment/train.py": "e9f97807d6f573c3",
+    "segment/precompute.py": "e2486ebdedce2014",
+    "segment/alns.py": "0fa0ec7b2b35bd5a",
+    "segment/scheduler.py": "a654dbba2e4af04a",
+    "segment/closed_loop.py": "47c5548415d0dd76",
+    "configs/scenario_uav2.json": "0fb866af432babad",
+    "configs/scenario_uav3.json": "c468569f44f0e77b",
+    "configs/scenario_uav4.json": "b31606fd2437f278"
+  }
+}

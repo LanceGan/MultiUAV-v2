@@ -42,8 +42,9 @@ class GreedyPolicy(object):
         return np.array([self.v_max, theta], dtype=np.float32)
 
 
-def _make_env(cfg, uav_traverse, use_a2g=True):
-    env = MultiUAVInspectionEnv(cfg, safe_distance=0.1, use_a2g=use_a2g)
+def _make_env(cfg, uav_traverse, use_a2g=True, use_comm=True):
+    env = MultiUAVInspectionEnv(cfg, safe_distance=0.1, use_a2g=use_a2g,
+                                use_comm=use_comm)
     env.set_uav_traverse(uav_traverse)
     return env
 
@@ -61,11 +62,16 @@ def _deterministic_reward(env, model, uav_traverse, uav_num, min_action, max_act
         total += float(np.sum(rewards))
         if info["terminal"] or info["truncated"]:
             break
+    # Only a COMPLETING rollout is a valid best-checkpoint candidate; a truncation
+    # (task failed) returns -inf so it can never be selected as best.
+    if not info["terminal"]:
+        return -float("inf")
     return total
 
 
 def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
-              model_dir=None, log_dir=None, log_every=10, use_a2g=True):
+              model_dir=None, log_dir=None, log_every=10, use_a2g=True,
+              use_comm=True):
     """Train parameter-shared independent TD3 on the injected traverse.
 
     Mirrors ``trajectory/train.py`` but *replaces* the smoke ``balanced_traverse``
@@ -78,7 +84,7 @@ def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    env = _make_env(cfg, uav_traverse, use_a2g=use_a2g)
+    env = _make_env(cfg, uav_traverse, use_a2g=use_a2g, use_comm=use_comm)
     state_dim = env.local_obs_dim
     action_dim = env.action_dim
     max_action = np.array([float(cfg["v_max"]), 2.0 * np.pi], dtype=np.float32)
@@ -129,10 +135,11 @@ def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
                 actions.append(np.clip(a + noise, min_action, max_action))
 
             next_obs, rewards, dones, info = env.step(actions)
-            # ``done`` for replay bootstrapping = true completion only; a timeout
-            # (truncation) must bootstrap as done=0 so the value is not biased down.
-            done = bool(info["terminal"])
-            episode_done = bool(info["terminal"]) or bool(info["truncated"])
+            # Truncation (T reached without completion) is a terminal FAILURE in
+            # this time-limited task -> done=True (no bootstrap); otherwise the
+            # critic bootstraps on a "dead" cutoff state and propagates wrong values.
+            done = bool(info["terminal"]) or bool(info["truncated"])
+            episode_done = done
             for i in range(uav_num):
                 replay.add(obs[i], actions[i], rewards[i], next_obs[i], done)
 
@@ -166,6 +173,11 @@ def train_td3(cfg, uav_traverse, total_episode=2000, model_subdir="Proposed",
                    steps, expl_scale))
 
     model.save(os.path.join(save_dir, "last.pth"))
+    # Fallback: if no completing rollout was ever found, keep the final policy as
+    # best.pth so the rollout script still has an artifact to load.
+    if best_det_reward == -float("inf"):
+        model.save(os.path.join(save_dir, "best.pth"))
+        log("  [eval] no completing rollout found; best.pth = last.pth fallback")
     np.savez(os.path.join(log_dir, "UAV_%d_%s_rewards.npz" % (uav_num, model_subdir)),
              ep_rewards=np.asarray(ep_rewards, dtype=np.float64))
     arr = np.asarray(ep_rewards, dtype=np.float64)

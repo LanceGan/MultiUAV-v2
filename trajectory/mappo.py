@@ -20,7 +20,7 @@ Training (on-policy)
 1. **Collect** ~``rollout_steps`` transitions across episodes, storing
    ``(global_state, obs_list, actions, log_probs, team_reward, value, done)``.
 2. **GAE** computes advantages and returns from the centralized value function
-   (``done = info["terminal"]``; truncation bootstraps with ``done = 0``).
+   (``done = terminal or truncated``; a timeout is a terminal failure here).
 3. **Multi-epoch update**: for each minibatch, the critic is fit with MSE to the
    returns, and each actor is updated with the clipped PPO ratio loss + an
    entropy bonus.  A single (shared) advantage stream is used for every agent
@@ -233,11 +233,14 @@ class MAPPO(object):
             if add_noise:
                 dist = Normal(mean, std)
                 a = dist.sample()
+                # Clip FIRST, then record the log-prob of the actually-taken
+                # (clipped) action, so old/new log-probs refer to the SAME action
+                # and the PPO ratio stays consistent.
+                a = torch.clamp(a, self.min_action, self.max_action)
                 lp = float(dist.log_prob(a).sum(-1).item())
             else:
                 a = mean
                 lp = 0.0
-            a = torch.clamp(a, self.min_action, self.max_action)
             actions.append(a.flatten().cpu().numpy().astype(np.float32))
             log_probs.append(lp)
         return actions, log_probs, value
@@ -355,9 +358,26 @@ class MAPPO(object):
 # ---------------------------------------------------------------------------
 # Training loop
 # ---------------------------------------------------------------------------
+def _deterministic_reward(env, model, uav_traverse):
+    """Deterministic rollout reward (no exploration noise); -inf if the task is
+    not completed, so non-completing policies are never selected as best."""
+    env.set_uav_traverse(uav_traverse)
+    obs = env.reset()
+    total = 0.0
+    while True:
+        actions = model.select_actions(obs, add_noise=False)
+        obs, rewards, dones, info = env.step(actions)
+        total += float(np.sum(rewards))
+        if info["terminal"] or info["truncated"]:
+            break
+    if not info["terminal"]:
+        return -float("inf")
+    return total
+
+
 def train_mappo(cfg, uav_traverse, total_episode=2000, model_subdir="MAPPO",
                 model_dir=None, log_dir=None, log_every=10, rollout_steps=2048,
-                use_a2g=True):
+                use_a2g=True, use_comm=True):
     """Train MAPPO on the injected ``uav_traverse`` and return a result dict.
 
     Returns ``{"ep_rewards": [...], "best_reward": float, "model": <MAPPO>}``.
@@ -374,7 +394,8 @@ def train_mappo(cfg, uav_traverse, total_episode=2000, model_subdir="MAPPO",
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    env = MultiUAVInspectionEnv(cfg, safe_distance=0.1, use_a2g=use_a2g)
+    env = MultiUAVInspectionEnv(cfg, safe_distance=0.1, use_a2g=use_a2g,
+                                use_comm=use_comm)
     env.set_uav_traverse(uav_traverse)
     local_state_dim = env.local_obs_dim
     action_dim = env.action_dim
@@ -392,6 +413,8 @@ def train_mappo(cfg, uav_traverse, total_episode=2000, model_subdir="MAPPO",
     log_path = os.path.join(log_dir, "UAV_%d_%s.log" % (uav_num, model_subdir))
 
     best_reward = -float("inf")
+    best_det_reward = -float("inf")
+    eval_interval = 50
     ep_rewards = []
 
     log_file = open(log_path, "w", encoding="utf-8")
@@ -414,7 +437,9 @@ def train_mappo(cfg, uav_traverse, total_episode=2000, model_subdir="MAPPO",
             next_obs, rewards, dones, info = env.step(actions)
 
             team_reward = float(np.sum(rewards))
-            done = bool(info["terminal"])
+            # Truncation (timeout) is a terminal FAILURE here -> done=True so GAE
+            # does not bootstrap from the "dead" cutoff state.
+            done = bool(info["terminal"]) or bool(info["truncated"])
             buffer.store(obs_list, actions, log_probs, team_reward, value,
                          done, next_obs)
 
@@ -432,7 +457,16 @@ def train_mappo(cfg, uav_traverse, total_episode=2000, model_subdir="MAPPO",
         ep_rewards.append(ep_reward)
         if ep_reward > best_reward:
             best_reward = ep_reward
-            model.save(os.path.join(save_dir, "best.pth"))
+
+        # Best checkpoint by a DETERMINISTIC rollout that COMPLETES the task
+        # (matching the other three trainers), not the noisy training reward.
+        if (ep + 1) % eval_interval == 0 or ep == 0:
+            det_reward = _deterministic_reward(env, model, uav_traverse)
+            if det_reward > best_det_reward:
+                best_det_reward = det_reward
+                model.save(os.path.join(save_dir, "best.pth"))
+                log("  [eval] ep %4d | det_reward %10.2f (new best)"
+                    % (ep + 1, det_reward))
 
         if (ep + 1) % log_every == 0 or ep == 0:
             log("ep %4d | reward %10.2f | avg100 %10.2f | steps %4d"
@@ -443,6 +477,9 @@ def train_mappo(cfg, uav_traverse, total_episode=2000, model_subdir="MAPPO",
         model.train(buffer)
 
     model.save(os.path.join(save_dir, "last.pth"))
+    if best_det_reward == -float("inf"):
+        model.save(os.path.join(save_dir, "best.pth"))
+        log("  [eval] no completing rollout found; best.pth = last.pth fallback")
     np.savez(os.path.join(log_dir, "UAV_%d_%s_rewards.npz" % (uav_num, model_subdir)),
              ep_rewards=np.asarray(ep_rewards, dtype=np.float64))
 
