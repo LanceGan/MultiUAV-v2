@@ -28,7 +28,7 @@ def main(argv=None):
             if src != tgt:
                 lib[(src, tgt)] = [generate_straight_hold(sc, field, src, tgt)]
 
-    res = solve_exact_tiny(sc, lib, field, departure_set=(0,), max_tasks=args.max_tasks)
+    res = solve_exact_tiny(sc, lib, field, max_tasks=args.max_tasks)
     print("exact: objective=%.4f proven_optimal=%s explored=%d runtime=%.1fs"
           % (res.objective, res.proven_optimal, res.explored, res.runtime_s))
     return 0

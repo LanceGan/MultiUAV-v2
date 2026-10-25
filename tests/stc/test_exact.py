@@ -1,19 +1,14 @@
-"""Task 13: tiny-instance exact benchmark."""
+"""Task 7: tiny-instance exact benchmark (honest bound, gap, timeout)."""
 
 import itertools
 
 import numpy as np
+import pytest
 
 from segment.stc.evaluator import evaluate_solution
-from segment.stc.exact import solve_exact_tiny
+from segment.stc.exact import _no_contention_lower_bound, solve_exact_tiny
 from segment.stc.generators import generate_straight_hold
-from segment.stc.operators import _pick_candidate
-from segment.stc.types import (
-    PlanSolution,
-    RadioSample,
-    STCScenario,
-    ScenarioLimits,
-)
+from segment.stc.types import PlanSolution, RadioSample, STCScenario, ScenarioLimits
 
 
 class _MockField:
@@ -47,17 +42,24 @@ def _library(sc):
     return field, lib
 
 
+def _edges(route, K):
+    if not route:
+        return []
+    return ([(-1, route[0])]
+            + [(route[i], route[i + 1]) for i in range(len(route) - 1)]
+            + [(route[-1], K)])
+
+
 def _bruteforce(sc, field, lib):
+    """Independent oracle: enumerate orders, take each edge's only candidate."""
     from segment.stc.evaluator import default_objective_spec
     spec = default_objective_spec(sc, lib)
     best = None
     for order in itertools.permutations(range(sc.n_tasks)):
         route = (tuple(order),)
-        cids = (tuple(_pick_candidate(lib, s, t) for s, t in
-                      [(-1, order[0])] + [(order[i], order[i + 1]) for i in range(len(order) - 1)]
-                      + [(order[-1], sc.n_tasks)]),)
+        cids = (tuple(lib[s, t][0].candidate_id for s, t in _edges(order, sc.n_tasks)),)
         sol = PlanSolution(routes=route, candidate_ids=cids)
-        res = evaluate_solution(sc, lib, sol, field, spec)
+        res = evaluate_solution(sc, lib, sol, field, spec, keep_timelines=False)
         if res.feasible and (best is None or res.objective < best[0]):
             best = (res.objective, sol)
     return best
@@ -78,3 +80,41 @@ def test_exact_finds_feasible():
     res = solve_exact_tiny(sc, lib, field)
     assert res.objective < float("inf")
     assert res.explored > 0
+
+
+def test_proven_optimal_has_tight_bound_and_zero_gap():
+    sc = _scenario(3)
+    field, lib = _library(sc)
+    res = solve_exact_tiny(sc, lib, field)
+    assert res.proven_optimal is True
+    assert res.lower_bound == pytest.approx(res.objective)
+    assert res.gap == 0.0
+
+
+def test_no_contention_lower_bound_is_admissible():
+    sc = _scenario(3)
+    field, lib = _library(sc)
+    from segment.stc.evaluator import default_objective_spec
+    spec = default_objective_spec(sc, lib)
+    lb = _no_contention_lower_bound(sc, lib, spec)
+    assert np.isfinite(lb)
+    assert lb > 0.0
+    res = solve_exact_tiny(sc, lib, field)
+    assert lb <= res.objective + 1e-9
+
+
+def test_timeout_returns_valid_bound_and_infinite_gap():
+    sc = _scenario(3)
+    field, lib = _library(sc)
+    res = solve_exact_tiny(sc, lib, field, time_limit_s=-1.0)
+    assert res.proven_optimal is False
+    assert np.isfinite(res.lower_bound)
+    assert res.lower_bound > 0.0
+    assert res.gap == float("inf")
+
+
+def test_max_tasks_guard_raises_before_enumeration():
+    sc = _scenario(10)
+    field, lib = _library(sc)
+    with pytest.raises(ValueError):
+        solve_exact_tiny(sc, lib, field, max_tasks=5)
