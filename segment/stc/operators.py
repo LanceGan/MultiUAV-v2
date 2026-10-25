@@ -41,8 +41,9 @@ def _pick_candidate(library, src, tgt, delta_t_s=0.5):
     not selectable trajectories.
     """
     rankable = [c for c in library[(src, tgt)] if c.rankable]
-    pool = rankable if rankable else list(library[(src, tgt)])
-    return min(pool, key=lambda c: candidate_cost(c, delta_t_s)).candidate_id
+    if not rankable:
+        raise ValueError("no rankable candidate for edge (%r, %r)" % (src, tgt))
+    return min(rankable, key=lambda c: candidate_cost(c, delta_t_s)).candidate_id
 
 
 def _plan(routes, scenario, library):

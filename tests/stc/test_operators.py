@@ -1,6 +1,7 @@
 """Task 6: conflict-aware operators preserve coverage and candidate choices."""
 
 import numpy as np
+import pytest
 
 from segment.stc.generators import generate_straight_hold
 from segment.stc.operators import build_initial_solution
@@ -105,7 +106,7 @@ def test_cheapest_proxy_insertion_named_honestly():
     assert "proxy" in doc and "feasible" in doc
 
 
-def _cand(cid, src, tgt, steps, data, n_sectors=3):
+def _cand(cid, src, tgt, steps, data, n_sectors=3, rankable=True):
     return SegmentCandidate(
         candidate_id=cid, source=src, target=tgt, generator="hand",
         positions_m=np.zeros((steps, 2)),
@@ -113,7 +114,7 @@ def _cand(cid, src, tgt, steps, data, n_sectors=3):
         sector_ids=np.zeros(steps, dtype=int),
         g2a_outage=np.zeros((steps, n_sectors)),
         flight_steps=steps, hold_position_m=(0.0, 0.0),
-        source_data_bits=float(data), rankable=True)
+        source_data_bits=float(data), rankable=rankable)
 
 
 def _multi_cand_fixture():
@@ -139,6 +140,39 @@ def _multi_cand_fixture():
     # edge (0,1) gets a slower (more expensive) second candidate
     lib[(0, 1)] = [lib[(0, 1)][0], _cand("exp_0_1", 0, 1, 20, 0.0)]
     return sc, field, lib
+
+
+def _nonrankable_fixture():
+    limits = ScenarioLimits(delta_t_s=1.0, v_max_mps=10.0, uav_height_m=100.0,
+                            arrive_radius_m=5.0, max_wait_s=10.0,
+                            mission_deadline_s=1000.0, bandwidth_hz=1e6,
+                            uplink_power_w=0.2, eps_out=0.35, w_t=0.5, w_d=0.5)
+    sc = STCScenario(n_uav=2, n_tasks=2,
+                     task_positions_m=((10.0, 0.0), (20.0, 0.0)),
+                     task_data_bits=(0.0, 0.0), depot_m=(0.0, 0.0),
+                     terminal_m=(30.0, 0.0), limits=limits, length_m=100.0,
+                     width_m=100.0, n_bs=1, task_seed=42, map_seed=0)
+    field = _MockField(sc.n_sectors)
+    lib = {
+        # edge (0,1) has only a NON-rankable relaxation reference
+        (0, 1): [_cand("relax_0_1", 0, 1, 3, 0.0, rankable=False)],
+        (-1, 0): [_cand("d_0", -1, 0, 3, 0.0)],
+        (-1, 1): [_cand("d_1", -1, 1, 3, 0.0)],
+        (0, 2): [_cand("t_0", 0, 2, 3, 0.0)],
+        (1, 2): [_cand("t_1", 1, 2, 3, 0.0)],
+    }
+    return sc, field, lib
+
+
+def test_rankable_less_edge_raises_not_falls_back():
+    from segment.stc.operators import _pick_candidate
+    from segment.stc.stc_operators import _routes_cost
+    sc, field, lib = _nonrankable_fixture()
+    # rankable-only selection must raise, never fall back to a relaxation ref
+    with pytest.raises(ValueError):
+        _pick_candidate(lib, 0, 1, sc.limits.delta_t_s)
+    with pytest.raises(ValueError):
+        _routes_cost([(0, 1)], sc, lib)
 
 
 def test_repair_preserves_path_switched_candidates():

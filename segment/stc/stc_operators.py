@@ -70,13 +70,25 @@ def _missing_tasks(solution, K):
     return [t for t in range(K) if t not in present]
 
 
+def _rankable_only(library, src, tgt):
+    """Selectable candidates for an edge; raise if none are rankable.
+
+    Non-rankable relaxation references (e.g. Straight-MaxSpeed) are lower
+    bounds, never selectable trajectories, so they must not be silently
+    returned as a fallback.
+    """
+    rankable = [c for c in library[(src, tgt)] if c.rankable]
+    if not rankable:
+        raise ValueError("no rankable candidate for edge (%r, %r)" % (src, tgt))
+    return rankable
+
+
 def _routes_cost(routes, scenario, library):
     dt = scenario.limits.delta_t_s
     total = 0.0
     for r in routes:
         for src, tgt in _edges(tuple(r), scenario.n_tasks):
-            rankable = [c for c in library[(src, tgt)] if c.rankable] or list(library[(src, tgt)])
-            total += min(candidate_cost(c, dt) for c in rankable)
+            total += min(candidate_cost(c, dt) for c in _rankable_only(library, src, tgt))
     return total
 
 
@@ -132,9 +144,8 @@ def worst_cost_removal(solution, context, rng, q=2):
             cost = 0.0
             for e in (i, i + 1):
                 src, tgt = edges[e]
-                rankable = [c for c in context.library[(src, tgt)] if c.rankable] \
-                    or list(context.library[(src, tgt)])
-                cost += min(candidate_cost(c, dt) for c in rankable)
+                cost += min(candidate_cost(c, dt)
+                            for c in _rankable_only(context.library, src, tgt))
             scored.append((cost, u, i))
     scored.sort(key=lambda x: -x[0])
     removals = sorted(((u, i) for _, u, i in scored[:q]),
@@ -356,9 +367,8 @@ def sector_diversity_insertion(solution, context, rng):
                 entropy = 0.0
                 for e in (pos, pos + 1):
                     src, tgt = edges[e]
-                    rankable = [cc for cc in context.library[(src, tgt)] if cc.rankable] \
-                        or list(context.library[(src, tgt)])
-                    cbest = min(rankable, key=lambda cc: candidate_cost(cc, dt))
+                    cbest = min(_rankable_only(context.library, src, tgt),
+                                key=lambda cc: candidate_cost(cc, dt))
                     entropy += _sector_entropy(cbest)
                 score = c - 0.1 * entropy
                 if best is None or score < best[0]:
@@ -430,8 +440,7 @@ def path_switch(solution, context, rng):
     edges = _edges(solution.routes[u], context.scenario.n_tasks)
     e = int(rng.randint(len(edges)))
     src, tgt = edges[e]
-    cands = [c for c in context.library[(src, tgt)] if c.rankable] \
-        or list(context.library[(src, tgt)])
+    cands = _rankable_only(context.library, src, tgt)
     cids = [c.candidate_id for c in cands]
     cur = list(solution.candidate_ids[u])
     if len(cids) > 1 and cur[e] in cids:
