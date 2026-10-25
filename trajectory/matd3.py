@@ -271,11 +271,15 @@ def _deterministic_reward(env, model, uav_traverse):
         total += float(np.sum(rewards))
         if info["terminal"] or info["truncated"]:
             break
+    # Only a COMPLETING rollout is a valid best-checkpoint candidate.
+    if not info["terminal"]:
+        return -float("inf")
     return total
 
 
 def train_matd3(cfg, uav_traverse, total_episode=2000, model_subdir="MATD3",
-                model_dir=None, log_dir=None, log_every=10, use_a2g=True):
+                model_dir=None, log_dir=None, log_every=10, use_a2g=True,
+                use_comm=True):
     """Train MATD3 (CTDE) on the injected ``uav_traverse``.
 
     Returns ``{"ep_rewards": [...], "best_reward": float, "model": MATD3}`` and
@@ -290,7 +294,8 @@ def train_matd3(cfg, uav_traverse, total_episode=2000, model_subdir="MATD3",
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    env = MultiUAVInspectionEnv(cfg, safe_distance=0.1, use_a2g=use_a2g)
+    env = MultiUAVInspectionEnv(cfg, safe_distance=0.1, use_a2g=use_a2g,
+                                use_comm=use_comm)
     env.set_uav_traverse(uav_traverse)
     local_state_dim = env.local_obs_dim
     action_dim = env.action_dim
@@ -337,10 +342,10 @@ def train_matd3(cfg, uav_traverse, total_episode=2000, model_subdir="MATD3",
             actions = model.select_actions(obs, add_noise=True,
                                            noise_scale=expl_scale * noise_scale)
             next_obs, rewards, dones, info = env.step(actions)
-            # done for replay bootstrapping = true completion only; a truncation
-            # bootstraps as done=0 so the value is not biased down.
-            done = bool(info["terminal"])
-            episode_done = bool(info["terminal"]) or bool(info["truncated"])
+            # Truncation (timeout) is a terminal FAILURE here -> done=True so the
+            # critic does not bootstrap from the "dead" cutoff state.
+            done = bool(info["terminal"]) or bool(info["truncated"])
+            episode_done = done
 
             # Store one joint transition per step.
             global_state = np.concatenate(obs)
@@ -379,6 +384,9 @@ def train_matd3(cfg, uav_traverse, total_episode=2000, model_subdir="MATD3",
                    steps, expl_scale))
 
     model.save(os.path.join(save_dir, "last.pth"))
+    if best_det_reward == -float("inf"):
+        model.save(os.path.join(save_dir, "best.pth"))
+        log("  [eval] no completing rollout found; best.pth = last.pth fallback")
     np.savez(os.path.join(log_dir, "UAV_%d_%s_rewards.npz" % (uav_num, model_subdir)),
              ep_rewards=np.asarray(ep_rewards, dtype=np.float64))
     arr = np.asarray(ep_rewards, dtype=np.float64)

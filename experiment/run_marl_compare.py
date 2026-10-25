@@ -29,7 +29,7 @@ ALGORITHMS = ("ILD3", "MADDPG", "MATD3", "MAPPO")
 
 
 def run(uav_num=2, total_episode=500, seed=42, algorithms=ALGORITHMS, log_dir=None,
-        all_a2g=False):
+        all_a2g=False, use_comm=True):
     log_dir = log_dir or _common.LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
 
@@ -50,16 +50,20 @@ def run(uav_num=2, total_episode=500, seed=42, algorithms=ALGORITHMS, log_dir=No
         use_a2g = True if all_a2g else (algo == "ILD3")
         if algo == "ILD3":
             _traj.train_td3(cfg, traverse, total_episode=total_episode,
-                            model_subdir="ILD3", log_dir=log_dir, use_a2g=use_a2g)
+                            model_subdir="ILD3", log_dir=log_dir, use_a2g=use_a2g,
+                            use_comm=use_comm)
         elif algo == "MADDPG":
             maddpg.train_maddpg(cfg, traverse, total_episode=total_episode,
-                                model_subdir="MADDPG", log_dir=log_dir, use_a2g=use_a2g)
+                                model_subdir="MADDPG", log_dir=log_dir, use_a2g=use_a2g,
+                                use_comm=use_comm)
         elif algo == "MATD3":
             matd3.train_matd3(cfg, traverse, total_episode=total_episode,
-                              model_subdir="MATD3", log_dir=log_dir, use_a2g=use_a2g)
+                              model_subdir="MATD3", log_dir=log_dir, use_a2g=use_a2g,
+                              use_comm=use_comm)
         elif algo == "MAPPO":
             mappo.train_mappo(cfg, traverse, total_episode=total_episode,
-                              model_subdir="MAPPO", log_dir=log_dir, use_a2g=use_a2g)
+                              model_subdir="MAPPO", log_dir=log_dir, use_a2g=use_a2g,
+                              use_comm=use_comm)
     return 0
 
 
@@ -72,10 +76,12 @@ def main(argv=None):
     parser.add_argument("--log_dir", type=str, default=None)
     parser.add_argument("--all_a2g", action="store_true",
                         help="all algorithms use the dual map (A2G+G2A), for the architecture ablation")
+    parser.add_argument("--no_comm", action="store_true",
+                        help="disable G2A outage + A2G delay reward penalties (pure-completion experiment)")
     args = parser.parse_args(argv)
     return run(uav_num=args.uav_num, total_episode=args.total_episode,
                seed=args.seed, algorithms=args.algorithms, log_dir=args.log_dir,
-               all_a2g=args.all_a2g)
+               all_a2g=args.all_a2g, use_comm=not args.no_comm)
 
 
 if __name__ == "__main__":

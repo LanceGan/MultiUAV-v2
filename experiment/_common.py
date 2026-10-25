@@ -49,6 +49,12 @@ def load_scenario(uav_num, seed=42):
     cfg = get_scenario(uav_num)
     if seed is not None:
         cfg["seed"] = int(seed)
+    # 让电磁地图区域与场景 length/width 对齐（Bug 3 修复：D = length/10 km，区域/基站数随 N 缩放）
+    from radio_map import radio_map_A2G, radio_map_G2A
+    _D_km = float(cfg["length"]) / 10.0
+    _n_bs = len(cfg["bs_loc"])  # 基站数量随 N 缩放（4/5/6）
+    radio_map_A2G.set_region(_D_km, _n_bs)
+    radio_map_G2A.set_region(_D_km, _n_bs)
     path = os.path.join(DATA_DIR, "Users_%d.txt" % int(cfg["user_num"]))
     points = np.loadtxt(path)[:, :2]
     data_sizes = np.asarray(

@@ -9,3 +9,5 @@ results/runs/**/.tmp-*
 
 # STC run-scoped experiment artifacts (frozen separately, not tracked)
 results/runs/
+results/models/
+results/figs/
