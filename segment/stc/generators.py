@@ -97,6 +97,15 @@ def generate_straight_hold(scenario, field, source, target):
                             positions, hold, data, rankable=True)
 
 
+def drl_generator_label(model, checkpoint_hash):
+    """Canonical generator label for an optional DRL baseline candidate.
+
+    Encodes both the model name and the checkpoint content hash so a persisted
+    library can identify exactly which learned policy produced a trace.
+    """
+    return "drl:%s:%s" % (model, checkpoint_hash)
+
+
 def generate_comm_waypoints(scenario, field, source, target,
                             grid_shape=(10, 10), max_waypoints=1):
     """Discrete relay-point search: direct candidate + one-relay candidates."""

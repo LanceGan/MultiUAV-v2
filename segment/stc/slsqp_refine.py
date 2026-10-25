@@ -50,7 +50,7 @@ def refine_candidate(candidate, scenario, field, max_waypoints=1):
         relay_opt = res.x
         positions, hold = _trace(scenario, field, src, tgt, data, via=(relay_opt,))
         refined = _build_candidate(scenario, field, candidate.source, candidate.target,
-                                   "comm_waypoint", positions, hold, data, rankable=True,
+                                   "slsqp_refined", positions, hold, data, rankable=True,
                                    candidate_id=candidate.candidate_id + "_refined")
         if candidate_cost(refined, limits.delta_t_s) <= candidate_cost(candidate, limits.delta_t_s) + 1e-6:
             return refined
