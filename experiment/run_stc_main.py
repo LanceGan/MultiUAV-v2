@@ -2,7 +2,10 @@
 
 DEFAULT_CONFIG documents defaults. Declared top-level JSON values override
 them, then explicit CLI flags override the file. ``solver.iterations`` aliases
-``iterations``. Generator settings completely declare enabled generators.
+``iterations``. Generator settings completely declare enabled generators;
+omitted families resolve to false, enabled objects receive explicit defaults.
+Straight flags require booleans; other families accept boolean enable/disable
+or a parameter object. Only the implemented single-relay mode is accepted.
 Smoke defaults: six tasks, spacing 1000m, reduced generators; explicit settings
 take precedence. The deterministic builder cannot train or invent SAC data.
 """
@@ -30,7 +33,7 @@ from segment.stc.radio import PerSectorRadioField
 from segment.stc.run_context import RunContext
 from segment.stc.scenario import load_stc_scenario
 from segment.stc.system_baselines import (
-    BaselineUnavailable, GRAPH_GENS, METHOD_SPECS, SYSTEM_BASELINE_KEYS,
+    BaselineUnavailable, COMM_AWARE_GENS, GRAPH_GENS, METHOD_SPECS, SYSTEM_BASELINE_KEYS,
     run_system_baseline, validate_baseline_availability,
 )
 from segment.stc.types import STCScenario
@@ -68,6 +71,60 @@ def _reject_constant(token):
     raise ValueError("non-finite JSON constant %s" % token)
 
 
+def _config_integer(value, name, minimum):
+    if type(value) is not int or value < minimum:
+        raise ValueError("%s must be an integer >= %d" % (name, minimum))
+
+
+def _config_number(value, name, minimum=0, maximum=None, exclusive_min=False):
+    if (type(value) not in (int, float) or not math.isfinite(value)
+            or (value <= minimum if exclusive_min else value < minimum)
+            or (maximum is not None and value > maximum)):
+        raise ValueError("%s has an invalid numeric type or range" % name)
+
+
+def _resolved_generators(declared):
+    """Validate every family/parameter and materialize enabled defaults."""
+    if not isinstance(declared, dict):
+        raise ValueError("generator_config must be an object")
+    if set(declared) - set(DEFAULT_GENERATOR_CONFIG):
+        raise ValueError("unsupported generator_config families")
+    resolved = {}
+    for family, defaults in DEFAULT_GENERATOR_CONFIG.items():
+        value = declared.get(family, False)
+        name = "generator_config." + family
+        if isinstance(defaults, bool):
+            if type(value) is not bool:
+                raise ValueError("%s must be boolean" % name)
+            resolved[family] = value
+            continue
+        if type(value) is bool:
+            if not value:
+                resolved[family] = False
+                continue
+            value = {}
+        if not isinstance(value, dict) or set(value) - set(defaults):
+            raise ValueError("unsupported %s parameters" % name)
+        params = deepcopy(defaults)
+        params.update(value)
+        if family == "comm_waypoints":
+            shape = params["grid_shape"]
+            if not isinstance(shape, (list, tuple)) or len(shape) != 2:
+                raise ValueError(name + ".grid_shape must contain two integers")
+            for extent in shape:
+                _config_integer(extent, name + ".grid_shape", 1)
+            params["grid_shape"] = list(shape)
+        if family == "astar":
+            _config_integer(params["grid"], name + ".grid", 2)
+        if "max_waypoints" in params:
+            if type(params["max_waypoints"]) is not int or params["max_waypoints"] != 1:
+                raise ValueError(name + ".max_waypoints must be 1 (implemented single-relay mode)")
+        if "max_refinements" in params:
+            _config_integer(params["max_refinements"], name + ".max_refinements", 0)
+        resolved[family] = params
+    return resolved
+
+
 def _resolve_config(args):
     path = Path(args.config)
     if not path.is_file():
@@ -89,8 +146,10 @@ def _resolve_config(args):
             cfg[key].update(value)
         else:
             cfg[key] = value
-    if "iterations" not in declared and "iterations" in cfg["solver"]:
-        cfg["iterations"] = cfg["solver"]["iterations"]
+    if "iterations" in cfg["solver"]:
+        _config_integer(cfg["solver"]["iterations"], "solver.iterations", 0)
+        if "iterations" not in declared:
+            cfg["iterations"] = cfg["solver"]["iterations"]
     cfg["solver"].pop("iterations", None)
     for key in ("iterations", "spacing_m", "smoke", "methods", "uav_nums",
                 "map_seeds", "task_seeds", "method_seeds"):
@@ -121,17 +180,22 @@ def _resolve_config(args):
             or len(cfg["methods"]) != len(set(cfg["methods"]))):
         raise ValueError("methods must be distinct registered method names")
     for key, minimum in (("iterations", 0), ("smoke_tasks", 1)):
-        if type(cfg[key]) is not int or cfg[key] < minimum:
-            raise ValueError("%s must be an integer >= %d" % (key, minimum))
-    spacing = cfg["spacing_m"]
-    if (isinstance(spacing, bool) or not isinstance(spacing, (int, float))
-            or not math.isfinite(spacing) or spacing <= 0):
-        raise ValueError("spacing_m must be positive and finite")
-    if not isinstance(cfg["generator_config"], dict):
-        raise ValueError("generator_config must be an object")
+        _config_integer(cfg[key], key, minimum)
+    _config_number(cfg["spacing_m"], "spacing_m", exclusive_min=True)
+    _config_number(cfg["solver"]["rho"], "solver.rho", maximum=1)
+    _config_number(cfg["solver"]["cooling"], "solver.cooling", maximum=1, exclusive_min=True)
+    _config_number(cfg["solver"]["T0"], "solver.T0", exclusive_min=True)
+    _config_integer(cfg["solver"]["segment"], "solver.segment", 1)
+    _config_integer(cfg["solver"]["audit_interval"], "solver.audit_interval", 0)
+    for key, value in cfg["score"].items():
+        _config_number(value, "score." + key)
+    cfg["generator_config"] = _resolved_generators(cfg["generator_config"])
     if (not isinstance(cfg["graph_generators"], list)
-            or any(not isinstance(x, str) for x in cfg["graph_generators"])):
-        raise ValueError("graph_generators must be a list of family names")
+            or not cfg["graph_generators"]
+            or any(type(x) is not str or x not in GRAPH_GENS | COMM_AWARE_GENS
+                   for x in cfg["graph_generators"])
+            or len(cfg["graph_generators"]) != len(set(cfg["graph_generators"]))):
+        raise ValueError("graph_generators must declare distinct graph/SLSQP or communication families")
     if cfg["sac_checkpoint"] is not None:
         if not isinstance(cfg["sac_checkpoint"], str):
             raise ValueError("sac_checkpoint must be a path or null")

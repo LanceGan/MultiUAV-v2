@@ -80,7 +80,9 @@ def test_config_drives_full_matrix_and_seals_replay_artifacts(tiny_run):
     assert spacings == [25.] * 8
     cfg = manifest["config"]
     assert cfg["iterations"] == 2 and cfg["spacing_m"] == 25.
-    assert cfg["smoke"] is True and cfg["generator_config"] == {"straight_hold": True}
+    assert cfg["smoke"] is True and cfg["generator_config"] == {
+        "straight_hold": True, "straight_relaxation": False,
+        "comm_waypoints": False, "astar": False, "slsqp_refine": False}
     assert cfg["method_seeds"] == [11, 12] and len(cfg["methods"]) == 4
     assert manifest["inputs"]["config_file"] == hashlib.sha256(config.read_bytes()).hexdigest()
     for kind in ["resolved_config", "scenario", "task", "map", "library"]:
@@ -193,3 +195,101 @@ def test_directory_config_is_rejected(tmp_path):
     with pytest.raises(SystemExit) as error:
         main.main(["--config", str(tmp_path), "--dry-run"])
     assert error.value.code != 0
+
+
+@pytest.mark.parametrize("invalid", [
+    {"solver": {"unknown": 1}},
+    {"score": {"unknown": 1}},
+    {"generator_config": {"sac": True}},
+    {"generator_config": {"comm_waypoints": {"unknown": 1}}},
+    {"generator_config": {"astar": {"unknown": 1}}},
+    {"generator_config": {"slsqp_refine": {"unknown": 1}}},
+    {"generator_config": {"straight_hold": "false"}},
+    {"generator_config": {"straight_relaxation": 1}},
+    {"generator_config": {"astar": "false"}},
+    {"generator_config": {"comm_waypoints": 0}},
+    {"solver": {"rho": -.1}},
+    {"solver": {"rho": 1.1}},
+    {"solver": {"rho": True}},
+    {"solver": {"cooling": 0}},
+    {"solver": {"cooling": 1.1}},
+    {"solver": {"cooling": "0.9"}},
+    {"solver": {"T0": 0}},
+    {"solver": {"segment": 0}},
+    {"solver": {"segment": 2.5}},
+    {"solver": {"segment": True}},
+    {"solver": {"audit_interval": -1}},
+    {"solver": {"iterations": -1}},
+    {"solver": {"iterations": "2"}},
+    {"solver": {"iterations": True}},
+    {"iterations": 1.5},
+    {"score": {"new_best": "3.0"}},
+    {"score": {"improve": -1}},
+    {"score": {"accept": True}},
+    {"score": {"reject": None}},
+    {"graph_generators": ["sac"]},
+    {"graph_generators": ["straight_hold"]},
+    {"graph_generators": ["astar", "astar"]},
+    {"graph_generators": []},
+    {"generator_config": {"comm_waypoints": {"grid_shape": [0, 2]}}},
+    {"generator_config": {"comm_waypoints": {"grid_shape": [2, True]}}},
+    {"generator_config": {"comm_waypoints": {"grid_shape": [2]}}},
+    {"generator_config": {"comm_waypoints": {"max_waypoints": 2}}},
+    {"generator_config": {"astar": {"grid": 1}}},
+    {"generator_config": {"astar": {"grid": 2.5}}},
+    {"generator_config": {"slsqp_refine": {"max_refinements": -1}}},
+    {"generator_config": {"slsqp_refine": {"max_waypoints": True}}},
+])
+def test_nested_config_rejected_before_run_creation(tiny_run, monkeypatch, invalid):
+    root, config, _ = tiny_run
+    declared = json.loads(config.read_text(encoding="utf-8"))
+    declared.update(invalid)
+    config.write_text(json.dumps(declared), encoding="utf-8")
+    def forbidden_create(*args, **kwargs):
+        raise AssertionError("invalid config reached RunContext.create")
+    monkeypatch.setattr(main.RunContext, "create", forbidden_create)
+    with pytest.raises(SystemExit) as error:
+        main.main(["--config", str(config), "--run-id", "invalid"])
+    assert error.value.code == 2
+    assert not (root / "results/runs/invalid").exists()
+
+
+def test_effective_nested_defaults_materialized_before_run_create(tiny_run, monkeypatch):
+    _, config, _ = tiny_run
+    declared = {"generator_config": {"comm_waypoints": {}, "astar": {},
+                                     "slsqp_refine": {}},
+                "solver": {"iterations": 0, "rho": 0, "cooling": 1},
+                "score": {"reject": 0}}
+    config.write_text(json.dumps(declared), encoding="utf-8")
+
+    class ReachedRunBoundary(Exception):
+        pass
+
+    def inspect_create(root, experiment, cfg, **kwargs):
+        assert cfg["generator_config"] == {
+            "straight_hold": False, "straight_relaxation": False,
+            "comm_waypoints": {"grid_shape": [10, 10], "max_waypoints": 1},
+            "astar": {"grid": 10},
+            "slsqp_refine": {"max_waypoints": 1, "max_refinements": 3}}
+        assert cfg["solver"] == {"rho": 0, "cooling": 1, "T0": .1,
+                                  "segment": 100, "audit_interval": 50}
+        assert cfg["iterations"] == 0
+        assert cfg["score"] == {"new_best": 3., "improve": 1., "accept": .5, "reject": 0}
+        raise ReachedRunBoundary()
+
+    monkeypatch.setattr(main.RunContext, "create", inspect_create)
+    with pytest.raises(ReachedRunBoundary):
+        main.main(["--config", str(config)])
+
+
+def test_enabled_generator_booleans_resolve_defaults(tiny_run, capsys):
+    _, config, _ = tiny_run
+    config.write_text(json.dumps({"generator_config": {
+        "straight_hold": False, "straight_relaxation": False,
+        "comm_waypoints": True, "astar": True, "slsqp_refine": False}}), encoding="utf-8")
+    assert main.main(["--config", str(config), "--dry-run"]) == 0
+    effective = json.loads(capsys.readouterr().out.split("run matrix: ", 1)[1])
+    assert effective["generator_config"] == {
+        "straight_hold": False, "straight_relaxation": False,
+        "comm_waypoints": {"grid_shape": [10, 10], "max_waypoints": 1},
+        "astar": {"grid": 10}, "slsqp_refine": False}
