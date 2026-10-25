@@ -27,16 +27,17 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from segment.stc.conflicts import build_conflict_report
-from segment.stc.evaluator import default_objective_spec
+from segment.stc.evaluator import default_objective_spec, evaluate_solution
 from segment.stc.library import DEFAULT_GENERATOR_CONFIG, build_all_pairs_library
 from segment.stc.radio import PerSectorRadioField
 from segment.stc.run_context import RunContext
+from segment.stc.sac_candidates import produce_sac_segment_candidates
 from segment.stc.scenario import load_stc_scenario
 from segment.stc.system_baselines import (
     BaselineUnavailable, COMM_AWARE_GENS, GRAPH_GENS, METHOD_SPECS, SYSTEM_BASELINE_KEYS,
     run_system_baseline, validate_baseline_availability,
 )
-from segment.stc.types import STCScenario
+from segment.stc.types import PlanSolution, STCScenario
 
 SMOKE_GENERATOR_CONFIG = {
     "straight_hold": True,
@@ -265,7 +266,14 @@ def _run_scenario(uav_num, map_seed, task_seed, cfg, rc):
     base = load_stc_scenario(uav_num, task_seed=task_seed, map_seed=map_seed)
     sc = _small_scenario(base, cfg["smoke_tasks"]) if cfg["smoke"] else base
     field = PerSectorRadioField.from_scenario(sc, spacing_m=cfg["spacing_m"])
-    library = build_all_pairs_library(sc, field, generator_config=cfg["generator_config"])
+    # Produce real checkpoint-bound SAC candidates; an incompatible/missing
+    # checkpoint is an explicit unavailable, never a deterministic substitution.
+    sac_result = produce_sac_segment_candidates(cfg["sac_checkpoint"], sc, field)
+    drl_candidates = (sac_result.candidates if sac_result.status == "available"
+                      else {})
+    library = build_all_pairs_library(sc, field,
+                                      generator_config=cfg["generator_config"],
+                                      drl_candidates=drl_candidates)
     reference = default_objective_spec(sc, library.candidates)
     prefix = "%d_%d_%d" % (uav_num, map_seed, task_seed)
     inputs = {}
@@ -277,10 +285,17 @@ def _run_scenario(uav_num, map_seed, task_seed, cfg, rc):
                      for (src, tgt), cs in sorted(library.candidates.items())]),
     ):
         inputs[kind] = rc.register_input(kind + "_" + prefix, data=_json_bytes(data))
+    if sac_result.status == "available":
+        inputs["checkpoint_sac"] = rc.register_input(
+            "checkpoint_sac_" + prefix, path=sac_result.checkpoint_path)
     options = {"checkpoint_path": cfg["sac_checkpoint"],
                "graph_generators": cfg["graph_generators"]}
     unavailable = {}
+    if sac_result.status == "unavailable" and "gatsac_style" in cfg["methods"]:
+        unavailable["gatsac_style"] = sac_result.reason
     for method in cfg["methods"]:
+        if method in unavailable:
+            continue
         try:
             validate_baseline_availability(method, sc, library, **options)
         except BaselineUnavailable as exc:
@@ -321,6 +336,107 @@ def _run_scenario(uav_num, map_seed, task_seed, cfg, rc):
             timelines.append({"record_id": record_id, "delta_t_s": sc.limits.delta_t_s,
                               "bandwidth_hz": sc.limits.bandwidth_hz, "timelines": trace})
     return records, solutions, timelines
+
+
+def run_rq2(scenario, field, library, objective_spec, seed=42):
+    """RQ2: assignment-method and sequence-method value under a fixed
+    segment/evaluator path (Task 9 Step 2).
+
+    Assignment methods (region, spatial k-means, Jia-EBTAS, library-aware
+    EBTAS) are compared with a fixed library-aware sequence; sequence methods
+    (distance, Jia time-energy, GA-EQTSP, library-aware) are compared with a
+    fixed library-aware-EBTAS assignment.  Every plan is scored through the
+    SAME :class:`ObjectiveSpec` and the authoritative synchronous evaluator.
+    """
+    from experiment.stc_common import seg_view
+    from segment.stc.assignment import (
+        jia_ebtas,
+        library_aware_ebtas,
+        region_partition,
+        spatial_kmeans,
+    )
+    from segment.stc.sequencing import (
+        distance_nn_2opt,
+        ga_eqtsp_sequence,
+        jia_time_energy_tsp,
+        library_aware_sequence,
+    )
+    from segment.stc.slsqp_refine import candidate_cost
+
+    lib = library.candidates if hasattr(library, "candidates") else dict(library)
+    seg = seg_view(lib, scenario, field)
+    dt = scenario.limits.delta_t_s
+    K = scenario.n_tasks
+
+    def _edges(route):
+        if not route:
+            return []
+        return ([(-1, route[0])]
+                + [(route[i], route[i + 1]) for i in range(len(route) - 1)]
+                + [(route[-1], K)])
+
+    def _candidate_ids(edges):
+        out = []
+        for s, t in edges:
+            rankable = [c for c in lib[(s, t)] if c.rankable]
+            out.append(min(rankable, key=lambda c: candidate_cost(c, dt)).candidate_id)
+        return tuple(out)
+
+    def _evaluate(routes):
+        cids = tuple(_candidate_ids(_edges(r)) for r in routes)
+        sol = PlanSolution(routes=tuple(tuple(r) for r in routes),
+                           candidate_ids=cids)
+        res = evaluate_solution(scenario, lib, sol, field, objective_spec,
+                                keep_timelines=False)
+        return {"status": "evaluated", "feasible": bool(res.feasible),
+                "objective": (None if res.objective == float("inf")
+                              else float(res.objective)),
+                "makespan_s": float(res.makespan_s),
+                "total_delay_s": float(res.total_delay_s)}
+
+    def _unavailable(method, layer, exc):
+        return {"method": method, "layer": layer, "status": "unavailable",
+                "failure_reason": repr(exc), "feasible": None,
+                "objective": None, "makespan_s": None, "total_delay_s": None}
+
+    assignment_records = []
+    assign_methods = {
+        "region_partition": lambda: region_partition(scenario, seed=seed),
+        "spatial_kmeans": lambda: spatial_kmeans(scenario, seed=seed),
+        "jia_ebtas": lambda: jia_ebtas(scenario, field=field, seed=seed),
+        "library_aware_ebtas": lambda: library_aware_ebtas(scenario, seg, seed=seed),
+    }
+    for name, fn in assign_methods.items():
+        try:
+            assign = fn()
+            routes = [library_aware_sequence(scenario, seg, cluster, seed=seed).route
+                      for cluster in assign.clusters]
+            rec = _evaluate(routes)
+            rec.update({"method": name, "layer": "assignment"})
+            assignment_records.append(rec)
+        except Exception as exc:
+            assignment_records.append(_unavailable(name, "assignment", exc))
+
+    sequence_records = []
+    base_assign = library_aware_ebtas(scenario, seg, seed=seed)
+    seq_methods = {
+        "distance_nn_2opt": lambda ids: distance_nn_2opt(scenario, ids, seed=seed),
+        "jia_time_energy_tsp": lambda ids: jia_time_energy_tsp(scenario, ids, seed=seed),
+        "ga_eqtsp_sequence": lambda ids: ga_eqtsp_sequence(scenario, ids, seed=seed),
+        "library_aware_sequence": lambda ids: library_aware_sequence(scenario, seg, ids, seed=seed),
+    }
+    for name, fn in seq_methods.items():
+        try:
+            routes = [fn(cluster).route for cluster in base_assign.clusters]
+            rec = _evaluate(routes)
+            rec.update({"method": name, "layer": "sequence"})
+            sequence_records.append(rec)
+        except Exception as exc:
+            sequence_records.append(_unavailable(name, "sequence", exc))
+
+    return {"assignment": assignment_records, "sequence": sequence_records,
+            "summary": {"n_assignment": len(assignment_records),
+                        "n_sequence": len(sequence_records)}}
 
 
 def _assert_coverage(records, cfg):

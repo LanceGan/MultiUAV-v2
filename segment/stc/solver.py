@@ -12,7 +12,11 @@ from dataclasses import dataclass
 import numpy as np
 
 from segment.stc.conflicts import build_conflict_report
-from segment.stc.evaluator import default_objective_spec, feasibility_rank
+from segment.stc.evaluator import (
+    default_objective_spec,
+    evaluate_solution,
+    feasibility_rank,
+)
 from segment.stc.incremental import EvaluationCache, solution_diff
 from segment.stc.stc_operators import (
     SearchContext,
@@ -48,7 +52,8 @@ class SolverCheckpoint:
 class STCALNS:
     def __init__(self, scenario, library, field, rho=0.1, T0=0.1, cooling=0.995,
                  segment=100, score_new_best=3.0, score_improve=1.0,
-                 score_accept=0.5, score_reject=0.0, audit_interval=50):
+                 score_accept=0.5, score_reject=0.0, audit_interval=50,
+                 operator_sets=None, disable_incremental=False):
         self.scenario = scenario
         self.library = library
         self.field = field
@@ -61,6 +66,15 @@ class STCALNS:
         self.score_accept = score_accept
         self.score_reject = score_reject
         self.audit_interval = audit_interval
+        # Optional operator-set override (RQ5 ablation): a dict with any of
+        # ``destroy`` / ``repair`` / ``local`` naming an operator dict.  Defaults
+        # to the shipped operator sets.
+        operator_sets = operator_sets or {}
+        self._destroy = operator_sets.get("destroy") or destroy_operators
+        self._repair = operator_sets.get("repair") or repair_operators
+        self._local = operator_sets.get("local") or local_operators
+        # RQ5 ablation: full replay per move instead of incremental resume.
+        self.disable_incremental = disable_incremental
         self.checkpoint = None
 
     # ------------------------------------------------------------------ #
@@ -90,10 +104,10 @@ class STCALNS:
         ctx.conflict = build_conflict_report(
             cur_res, self.scenario.limits.bandwidth_hz,
             self.scenario.limits.delta_t_s)
-        wd = {n: 1.0 for n in destroy_operators}
-        wr = {n: 1.0 for n in repair_operators}
-        wl = {n: 1.0 for n in local_operators}
-        names = list(destroy_operators) + list(repair_operators) + list(local_operators)
+        wd = {n: 1.0 for n in self._destroy}
+        wr = {n: 1.0 for n in self._repair}
+        wl = {n: 1.0 for n in self._local}
+        names = list(self._destroy) + list(self._repair) + list(self._local)
         scores = {n: 0.0 for n in names}
         uses = {n: 0 for n in names}
         best_feasible = initial if cur_res.feasible else None
@@ -159,18 +173,26 @@ class STCALNS:
             d = self._pick(wd, rng)
             r = self._pick(wr, rng)
             q = self._draw_q(rng)
-            partial = destroy_operators[d](cur, ctx, rng, q)
-            new = repair_operators[r](partial, ctx, rng)
+            partial = self._destroy[d](cur, ctx, rng, q)
+            new = self._repair[r](partial, ctx, rng)
             chosen = [d, r]
             local_op = None
             if rng.rand() < 0.5:
                 local_op = self._pick(wl, rng)
-                new = local_operators[local_op](new, ctx, rng)
+                new = self._local[local_op](new, ctx, rng)
                 chosen.append(local_op)
 
-            affected, per_uav_earliest = solution_diff(cur, new, self.scenario.n_tasks)
-            earliest = min(per_uav_earliest.values()) if per_uav_earliest else 0
-            new_res = cache.evaluate_after_move(new, affected, earliest)
+            if self.disable_incremental:
+                new_res = evaluate_solution(
+                    self.scenario, self.library, new, self.field,
+                    st["objective_spec"])
+                cache.full_calls += 1
+            else:
+                affected, per_uav_earliest = solution_diff(
+                    cur, new, self.scenario.n_tasks)
+                earliest = (min(per_uav_earliest.values())
+                            if per_uav_earliest else 0)
+                new_res = cache.evaluate_after_move(new, affected, earliest)
 
             # feasibility-first acceptance via lexicographic rank (spec §7.7)
             cur_rank = feasibility_rank(cur_res)[:5]
