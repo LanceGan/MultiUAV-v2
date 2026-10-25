@@ -10,10 +10,12 @@ def test_radio_map_returns_finite_sinr_and_outage():
     assert 0.0 <= float(outage[0][0]) <= 1.0  # 单点中断概率 = outage_vec[0]
 
 def test_users_files_have_expected_shape():
-    for n in (20, 30, 40):
+    # region scales with N: 20->4km(40), 30->5km(50), 40->6km(60), in 100m units
+    bounds = {20: 40, 30: 50, 40: 60}
+    for n, bound in bounds.items():
         pts = np.loadtxt(f"results/datas/Users_{n}.txt")
         assert pts.shape == (n, 3)  # x,y,h
-        assert pts[:, :2].min() >= 0 and pts[:, :2].max() <= 40  # 4km×4km，单位100m
+        assert pts[:, :2].min() >= 0 and pts[:, :2].max() <= bound
 
 def test_radio_map_covers_full_4km_area():
     # 右上角 (3.5, 3.5) km 必须在 4km×4km 覆盖内：有限 SINR + 中断概率在 [0,1]（无 IndexError）

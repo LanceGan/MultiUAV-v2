@@ -137,7 +137,7 @@ def getAntennaGain(Theta_deg, Phi_deg):
     ArrayFactor = np.conjugate(WeightFlatten).dot(SteeringVector.reshape(ArrayElement_Vertical, 1))
     Farray = Felement * ArrayFactor
     Garray = (np.abs(Farray)) ** 2
-    return 10 * np.log10(Garray), Farray
+    return 10 * np.log10(Garray).item(), Farray
 
 #=========Main Function that determines the best outage from all BS at a given location=======
 #loc_vec: a matrix, nx3, each row is a (x,y,z) location

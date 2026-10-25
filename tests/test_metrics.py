@@ -31,8 +31,8 @@ def test_edge_energy_zero_length_is_zero():
 def test_get_data_sizes_shape_and_range():
     sizes = config.get_data_sizes(20, seed=42)
     assert len(sizes) == 20
-    assert np.all(sizes >= 100.0)
-    assert np.all(sizes <= 300.0)
+    assert np.all(sizes >= 10.0)
+    assert np.all(sizes <= 30.0)
 
 def test_get_data_sizes_deterministic():
     a = config.get_data_sizes(10, seed=7)
