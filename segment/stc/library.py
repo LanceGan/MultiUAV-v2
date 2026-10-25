@@ -130,7 +130,40 @@ def pareto_prune(candidates, *, max_candidates, min_sector_distance=0.0,
 
     kept = [candidates[i] for i in keep]
     kept.sort(key=lambda c: candidate_cost(c, delta_t_s))
-    return tuple(kept[:max_candidates])
+    return tuple(_truncate_diverse(kept, max_candidates, min_sector_distance))
+
+
+def _truncate_diverse(kept, max_candidates, min_sector_distance):
+    """Truncate ``kept`` (already sorted by cost) to ``max_candidates``.
+
+    When ``min_sector_distance > 0``, reserve one slot per materially distinct
+    sector signature (L1 distance >= ``min_sector_distance`` from every already
+    reserved signature) before filling remaining slots by cost.  This stops
+    scalar-cost truncation from silently dropping the slower, sector-diverse
+    candidates that ``pareto_prune`` just retained.
+    """
+    if len(kept) <= max_candidates or min_sector_distance <= 0.0:
+        return list(kept[:max_candidates])
+
+    selected = []
+    selected_sigs = []
+    for c in kept:
+        sig = _sector_signature(c)
+        if all(_sector_l1_distance(sig, s) >= min_sector_distance
+               for s in selected_sigs):
+            selected_sigs.append(sig)
+            selected.append(c)
+        if len(selected) == max_candidates:
+            break
+
+    if len(selected) < max_candidates:
+        chosen = {c.candidate_id for c in selected}
+        for c in kept:
+            if len(selected) >= max_candidates:
+                break
+            if c.candidate_id not in chosen:
+                selected.append(c)
+    return selected
 
 
 # --------------------------------------------------------------------------- #

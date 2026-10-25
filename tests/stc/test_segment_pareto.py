@@ -107,6 +107,22 @@ def test_pareto_prune_respects_max_candidates():
     assert len(pruned) <= 5
 
 
+def test_pareto_prune_truncation_preserves_sector_diversity():
+    # four non-dominated sector-0 candidates (front exceeds max_candidates) plus a
+    # slower, dominated sector-1 candidate that must survive truncation.
+    a = _cand("a", 10, 2.0, 40.0, 0.1, [0] * 10)
+    b = _cand("b", 20, 2.0, 30.0, 0.1, [0] * 20)
+    c = _cand("c", 30, 2.0, 20.0, 0.1, [0] * 30)
+    d = _cand("d", 40, 2.0, 10.0, 0.1, [0] * 40)
+    slow_diverse = _cand("slow_s1", 50, 2.0, 40.0, 0.1, [1] * 50)
+    pruned = pareto_prune([slow_diverse, a, b, c, d], max_candidates=3,
+                          min_sector_distance=0.5, delta_t_s=0.5)
+    ids = {c.candidate_id for c in pruned}
+    assert len(pruned) == 3
+    assert "slow_s1" in ids
+    assert "a" in ids
+
+
 def test_build_default_path_retains_sector_diverse_candidate():
     """The shipped default (no explicit pareto_kwargs) keeps a slower candidate
     whose sector occupancy differs materially from the fast direct candidate."""
