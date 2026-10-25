@@ -138,7 +138,9 @@ def getAntennaGain(Theta_deg, Phi_deg):
     ArrayFactor = np.conjugate(WeightFlatten).dot(SteeringVector.reshape(ArrayElement_Vertical, 1))
     Farray = Felement * ArrayFactor
     Garray = (np.abs(Farray)) ** 2
-    return 10 * np.log10(Garray).item(), Farray
+    # 显式 float()：.item() 已把 1×1 数组取成标量，float() 进一步保证返回 Python
+    # 标量（而非 ndarray），杜绝赋给标量槽位时的 "array ndim>0 -> scalar" 弃用警告。
+    return float(10 * np.log10(Garray).item()), Farray
 
 #=========Main Function that determines the best outage from all BS at a given location=======
 #loc_vec: a matrix, nx3, each row is a (x,y,z) location
