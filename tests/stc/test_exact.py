@@ -118,3 +118,10 @@ def test_max_tasks_guard_raises_before_enumeration():
     field, lib = _library(sc)
     with pytest.raises(ValueError):
         solve_exact_tiny(sc, lib, field, max_tasks=5)
+
+
+def test_default_max_tasks_guards_large_instance():
+    sc = _scenario(5)
+    field, lib = _library(sc)
+    with pytest.raises(ValueError):
+        solve_exact_tiny(sc, lib, field)

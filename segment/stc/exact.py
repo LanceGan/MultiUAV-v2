@@ -7,11 +7,15 @@ only when the *entire* declared domain has been covered; a timeout returns the
 incumbent plus a valid admissible no-contention lower bound and a finite gap
 when both are finite, with ``proven_optimal=False``.
 
-The reported ``lower_bound`` is a genuine admissible bound (never over-estimates
-the true optimum), not a placeholder.
+A pre-allocation size guard refuses to start any search whose declared leaf
+count (assignment x permutation x candidate) exceeds ``max_leaves``, so an
+intractable instance fails fast instead of grinding.  The reported
+``lower_bound`` is a genuine admissible bound (never over-estimates the true
+optimum), not a placeholder.
 """
 
 import itertools
+import math
 import time
 from dataclasses import dataclass
 
@@ -39,6 +43,48 @@ def _edge_candidates(library, src, tgt):
         return library[(src, tgt)]
     except KeyError:
         return ()
+
+
+def _rankable(library, src, tgt):
+    """Strict rankable-only candidates for an edge (empty when none exist)."""
+    return [c for c in _edge_candidates(library, src, tgt) if c.rankable]
+
+
+def _route_edges(route, K):
+    if not route:
+        return []
+    return ([(-1, route[0])]
+            + [(route[i], route[i + 1]) for i in range(len(route) - 1)]
+            + [(route[-1], K)])
+
+
+def _leaf_upper_bound(scenario, library):
+    """Cheap upper bound on the declared leaf count (never under-estimates).
+
+    For each assignment the number of leaves is the product over routes of
+    ``len(route)!`` (permutations) times the candidate-product over its edges.
+    The candidate-product per edge is bounded above by ``c_max ** (len(route)+1)``
+    where ``c_max`` is the maximum rankable-candidate count over all edges, so
+    the sum over assignments is an upper bound on the true leaf count.
+    """
+    K = scenario.n_tasks
+    U = scenario.n_uav
+    c_max = 1
+    for s in range(-1, K + 1):
+        for t in range(K + 1):
+            if s != t:
+                c_max = max(c_max, len(_rankable(library, s, t)))
+    total = 0
+    for assign in itertools.product(range(U), repeat=K):
+        lens = [0] * U
+        for t, u in enumerate(assign):
+            lens[u] += 1
+        leaves = 1
+        for L in lens:
+            cand = 1 if L == 0 else c_max ** (L + 1)
+            leaves *= math.factorial(L) * cand
+        total += leaves
+    return total
 
 
 def _no_contention_lower_bound(scenario, library, spec):
@@ -107,20 +153,19 @@ def _gap(upper, lower):
 def _plan_variants(routes, scenario, library):
     """Lazily yield every PlanSolution for the given routes (one per candidate combo).
 
-    Only *rankable* candidates are enumerated: non-rankable relaxation references
-    are lower bounds, not selectable trajectories, so they are outside the
-    declared discrete domain.
+    Strict rankable-only: if any traversed edge has no *rankable* candidate, the
+    route is outside the declared selectable domain and yields no solution (never
+    fall back to a non-rankable relaxation reference).
     """
     per_route = []
     for r in routes:
-        edges = ([] if not r else
-                 [(-1, r[0])] + [(r[i], r[i + 1]) for i in range(len(r) - 1)]
-                 + [(r[-1], scenario.n_tasks)])
+        edges = _route_edges(r, scenario.n_tasks)
         id_lists = []
         for e in edges:
-            cands = [c for c in library[e] if c.rankable]
-            pool = cands if cands else list(library[e])
-            id_lists.append([c.candidate_id for c in pool])
+            cands = _rankable(library, e[0], e[1])
+            if not cands:
+                return  # no selectable candidate on this edge -> no solutions
+            id_lists.append([c.candidate_id for c in cands])
         per_route.append(id_lists)
     route_choices = [itertools.product(*lists) for lists in per_route]
     for combo in itertools.product(*route_choices):
@@ -128,12 +173,14 @@ def _plan_variants(routes, scenario, library):
                            candidate_ids=tuple(combo))
 
 
-def solve_exact_tiny(scenario, library, field, max_tasks=8, time_limit_s=3600.0,
-                     objective_spec=None):
+def solve_exact_tiny(scenario, library, field, max_tasks=4, time_limit_s=3600.0,
+                     objective_spec=None, max_leaves=2_000_000):
     """Guarded exact enumeration of assignment x order x candidate.
 
-    Raises ``ValueError`` when ``K > max_tasks`` *before* any permutation/product
-    allocation.  Enumerates lazily with frequent deadline checks.
+    Raises ``ValueError`` *before* any permutation/product allocation when
+    ``K > max_tasks`` or when the declared leaf-count upper bound exceeds
+    ``max_leaves``.  Enumerates lazily with a deadline check at every nested
+    level (assignment, permutation, candidate).
     """
     start = time.time()
     K = scenario.n_tasks
@@ -141,6 +188,11 @@ def solve_exact_tiny(scenario, library, field, max_tasks=8, time_limit_s=3600.0,
     if K > max_tasks:
         raise ValueError("K=%d exceeds max_tasks=%d; exact enumeration intractable"
                          % (K, max_tasks))
+    leaves = _leaf_upper_bound(scenario, library)
+    if leaves > max_leaves:
+        raise ValueError(
+            "declared leaf count upper bound %d exceeds max_leaves=%d; "
+            "refusing to start an intractable exact search" % (leaves, max_leaves))
 
     spec = (objective_spec if objective_spec is not None
             else default_objective_spec(scenario, library))
@@ -155,6 +207,9 @@ def solve_exact_tiny(scenario, library, field, max_tasks=8, time_limit_s=3600.0,
         return time.time() - start > time_limit_s
 
     for assign in itertools.product(range(U), repeat=K):
+        if deadline_hit():
+            timed_out = True
+            break
         routes = [[] for _ in range(U)]
         for t, u in enumerate(assign):
             routes[u].append(t)

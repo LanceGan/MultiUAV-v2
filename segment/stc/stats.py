@@ -129,6 +129,14 @@ def hierarchical_paired_summary(records, method_a, method_b, metric="metric",
         keyed.append((scen, m, rep, feasible, val))
         scen_reps.setdefault(scen, {}).setdefault(m, set()).add(rep)
 
+    # empty input: a method with no records at all is a data-collection error,
+    # not a valid (silently empty) paired comparison.
+    present = {m for (_, m, _, _, _) in keyed}
+    missing_methods = [m for m in (method_a, method_b) if m not in present]
+    if missing_methods:
+        raise ValueError("no records for method(s) %r (empty input)"
+                         % missing_methods)
+
     # scenario-coverage completeness: a scenario present for only one method is a
     # silent data-loss bug (e.g. an orchestrator failing to emit one method's
     # records for that scenario).  Reject it rather than narrowing the paired set.
@@ -143,19 +151,19 @@ def hierarchical_paired_summary(records, method_a, method_b, metric="metric",
             % (sorted(only_a), method_a, method_b,
                sorted(only_b), method_b, method_a))
 
-    # complete replicate pairing (paired cost policies)
-    if failure_policy in ("common_feasible", "penalized"):
-        for scen, by_method in scen_reps.items():
-            if method_a in by_method and method_b in by_method:
-                sa, sb = by_method[method_a], by_method[method_b]
-                if not (sa & sb):
-                    raise ValueError(
-                        "scenario %r has disjoint replicate sets between %s and %s"
-                        % (scen, method_a, method_b))
-                if sa != sb:
-                    raise ValueError(
-                        "scenario %r has incomplete replicate pairing: %s=%r vs %s=%r"
-                        % (scen, method_a, sorted(sa), method_b, sorted(sb)))
+    # complete replicate pairing (all policies; the paired assumption requires
+    # identical replicate seeds per scenario for both methods)
+    for scen, by_method in scen_reps.items():
+        if method_a in by_method and method_b in by_method:
+            sa, sb = by_method[method_a], by_method[method_b]
+            if not (sa & sb):
+                raise ValueError(
+                    "scenario %r has disjoint replicate sets between %s and %s"
+                    % (scen, method_a, method_b))
+            if sa != sb:
+                raise ValueError(
+                    "scenario %r has incomplete replicate pairing: %s=%r vs %s=%r"
+                    % (scen, method_a, sorted(sa), method_b, sorted(sb)))
 
     scen_means = _aggregate(keyed, method_a, method_b, failure_policy, penalty)
 

@@ -78,9 +78,31 @@ def _run_git(args):
         return ""
 
 
+def _collect_source_hashes(path, cap=1000):
+    """SHA-256 of a file or, recursively, of every file under a directory."""
+    out = {}
+    path = Path(path)
+    if path.is_file():
+        try:
+            out[str(path)] = _hash_file(path)
+        except Exception:
+            out[str(path)] = "unreadable"
+        return out
+    if path.is_dir():
+        for child in path.rglob("*"):
+            if len(out) >= cap:
+                break
+            if child.is_file():
+                try:
+                    out[str(child)] = _hash_file(child)
+                except Exception:
+                    out[str(child)] = "unreadable"
+    return out
+
+
 def _git_provenance():
     info = {"head": "unknown", "status": "unknown", "diff": "",
-            "untracked_hashes": {}}
+            "diff_staged": "", "untracked_hashes": {}}
     head = _run_git(["rev-parse", "HEAD"]).strip()
     if head:
         info["head"] = head
@@ -90,18 +112,20 @@ def _git_provenance():
     diff = _run_git(["diff"])
     if diff:
         info["diff"] = diff
+    diff_staged = _run_git(["diff", "--staged"])
+    if diff_staged:
+        info["diff_staged"] = diff_staged
     untracked = {}
     try:
         for line in info["status"].splitlines():
             if line.startswith("??"):
                 p = Path(line[3:].strip())
-                if p.is_file():
-                    try:
-                        untracked[str(p)] = _hash_file(p)
-                    except Exception:
-                        untracked[str(p)] = "unreadable"
-                if len(untracked) >= 200:
-                    break
+                for fp, h in _collect_source_hashes(p).items():
+                    untracked[fp] = h
+                    if len(untracked) >= 200:
+                        break
+            if len(untracked) >= 200:
+                break
     except Exception:
         pass
     info["untracked_hashes"] = untracked
@@ -132,6 +156,13 @@ class RunContext:
         self._input_hashes = {}
         self._expected = set(expected or [])
         self._sealed = False
+        # Freeze the execution environment at creation time so the manifest
+        # records the ACTUAL start state, not whatever changed by the end.
+        self._frozen_config = dict(config)
+        self._frozen_config_sha = _canonical_sha256(dict(config))
+        self._frozen_config_resolved = _resolve_config(dict(config))
+        self._start_git = _git_provenance()
+        self._start_versions = _versions()
 
     @classmethod
     def create(cls, root, experiment, config, run_id=None, expected=None):
@@ -199,19 +230,29 @@ class RunContext:
                 raise RuntimeError(
                     "cannot finalize success: missing expected artifacts %r"
                     % missing)
+            # Re-verify each expected artifact is still on disk and unchanged.
+            for name in sorted(self._expected):
+                path = self.run_dir / name
+                if not path.is_file():
+                    raise RuntimeError(
+                        "expected artifact %r is missing on disk at seal time" % name)
+                if _hash_file(path) != self._hashes[name]:
+                    raise RuntimeError(
+                        "expected artifact %r hash mismatch at seal time" % name)
 
         manifest = {
             "run_id": self.run_id,
             "experiment": self.experiment,
             "status": status,
-            "git": _git_provenance(),
+            "git": self._start_git,
+            "git_end": _git_provenance(),
             "command": " ".join(sys.argv),
             "start_time": self.start_time,
             "end_time": datetime.now().isoformat(timespec="seconds"),
-            "versions": _versions(),
-            "config": self.config,
-            "config_sha256": _canonical_sha256(self.config),
-            "config_resolved": _resolve_config(self.config),
+            "versions": self._start_versions,
+            "config": self._frozen_config,
+            "config_sha256": self._frozen_config_sha,
+            "config_resolved": self._frozen_config_resolved,
             "inputs": dict(self._input_hashes),
             "hashes": dict(self._hashes),
             "expected": sorted(self._expected),

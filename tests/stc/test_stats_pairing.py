@@ -79,11 +79,21 @@ def test_success_rate_policy_over_all_instances():
     assert s.n == 3
 
 
-def test_success_rate_allows_disjoint_replicates():
+def test_success_rate_requires_complete_pairing():
     recs = [_rec(0, "A", 0, 1.0, feasible=True),
             _rec(0, "B", 10, 2.0, feasible=False)]
-    s = hierarchical_paired_summary(recs, "A", "B", failure_policy="success_rate")
-    assert s.mean_diff == pytest.approx(1.0)
+    with pytest.raises(ValueError):
+        hierarchical_paired_summary(recs, "A", "B", failure_policy="success_rate")
+
+
+def test_rejects_empty_input():
+    with pytest.raises(ValueError):
+        hierarchical_paired_summary([], "A", "B")
+
+
+def test_rejects_method_absent_entirely():
+    with pytest.raises(ValueError):
+        hierarchical_paired_summary([_rec(0, "A", 0, 1.0)], "A", "B")
 
 
 def test_common_feasible_drops_failures_by_policy():

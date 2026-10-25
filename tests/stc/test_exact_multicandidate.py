@@ -9,6 +9,7 @@ authoritative evaluator (``evaluate_solution``) for leaf objectives.
 import itertools
 
 import numpy as np
+import pytest
 
 from segment.stc.evaluator import default_objective_spec, evaluate_solution
 from segment.stc.exact import solve_exact_tiny
@@ -111,6 +112,31 @@ def test_exact_enumerates_every_candidate_combo():
     res = solve_exact_tiny(sc, lib, field)
     # 1 assignment (single UAV), 2 orders, 3 edges each with 5 candidates
     assert res.explored == 2 * 5 ** 3
+
+
+def test_size_guard_raises_before_enumeration():
+    sc = _scenario(2, 2)
+    field = _MockField(sc.n_sectors)
+    lib = _library(sc, field)
+    with pytest.raises(ValueError):
+        solve_exact_tiny(sc, lib, field, max_leaves=100)
+
+
+def test_exact_skips_routes_without_rankable_candidate():
+    sc = _scenario(2, 1)
+    field = _MockField(sc.n_sectors)
+    lib = {}
+    for src in range(-1, sc.n_tasks + 1):
+        for tgt in range(sc.n_tasks + 1):
+            if src != tgt:
+                if (src, tgt) == (0, 1):
+                    lib[(src, tgt)] = [generate_straight_relaxation(sc, field, src, tgt)]
+                else:
+                    lib[(src, tgt)] = [generate_straight_hold(sc, field, src, tgt)]
+    res = solve_exact_tiny(sc, lib, field)
+    # order (0,1) traverses edge (0,1) which has no rankable candidate -> skipped;
+    # order (1,0) is fully rankable -> exactly one solution.
+    assert res.explored == 1
 
 
 def test_exact_excludes_non_rankable_candidates():

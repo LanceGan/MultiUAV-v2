@@ -117,4 +117,51 @@ def test_manifest_records_git_provenance_keys(tmp_path):
     assert "head" in data["git"]
     assert "status" in data["git"]
     assert "diff" in data["git"]
+    assert "diff_staged" in data["git"]
     assert "untracked_hashes" in data["git"]
+
+
+def test_finalize_rechecks_artifact_on_disk(tmp_path):
+    root = tmp_path / "runs"
+    root.mkdir()
+    rc = RunContext.create(root, "test", {}, run_id="r9",
+                           expected=["summary.json"])
+    rc.write_json("summary", {"a": 1})
+    (root / "r9" / "summary.json").write_bytes(b"tampered")
+    with pytest.raises(RuntimeError):
+        rc.finalize("success")
+
+
+def test_finalize_detects_missing_artifact_on_disk(tmp_path):
+    root = tmp_path / "runs"
+    root.mkdir()
+    rc = RunContext.create(root, "test", {}, run_id="r10",
+                           expected=["summary.json"])
+    rc.write_json("summary", {"a": 1})
+    (root / "r10" / "summary.json").unlink()
+    with pytest.raises(RuntimeError):
+        rc.finalize("success")
+
+
+def test_manifest_freezes_config_at_create(tmp_path):
+    root = tmp_path / "runs"
+    root.mkdir()
+    rc = RunContext.create(root, "test", {"k": "v"}, run_id="r11")
+    rc.config["k"] = "mutated"
+    rc.write_json("summary", {})
+    manifest = rc.finalize("success")
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    assert data["config"]["k"] == "v"
+    assert data["config_sha256"] == _sha(
+        json.dumps({"k": "v"}, sort_keys=True).encode("utf-8"))
+
+
+def test_untracked_directory_contents_hashed(tmp_path):
+    from segment.stc.run_context import _collect_source_hashes
+    d = tmp_path / "untracked_dir"
+    (d / "sub").mkdir(parents=True)
+    (d / "a.txt").write_text("hello", encoding="utf-8")
+    (d / "sub" / "b.bin").write_bytes(b"\x00\x01")
+    hashes = _collect_source_hashes(d)
+    assert hashes[str(d / "a.txt")] == _sha(b"hello")
+    assert hashes[str(d / "sub" / "b.bin")] == _sha(b"\x00\x01")
