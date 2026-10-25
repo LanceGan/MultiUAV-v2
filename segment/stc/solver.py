@@ -47,7 +47,7 @@ class SolverCheckpoint:
 class STCALNS:
     def __init__(self, scenario, library, field, rho=0.1, T0=0.1, cooling=0.995,
                  segment=100, score_new_best=3.0, score_improve=1.0,
-                 score_accept=0.5, score_reject=0.0, audit_interval=None):
+                 score_accept=0.5, score_reject=0.0, audit_interval=50):
         self.scenario = scenario
         self.library = library
         self.field = field

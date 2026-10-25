@@ -2,7 +2,9 @@
 checkpoint/resume reproduces an uninterrupted run exactly."""
 
 import numpy as np
+import pytest
 
+from segment.stc.evaluator import default_objective_spec, evaluate_solution
 from segment.stc.generators import generate_straight_hold
 from segment.stc.operators import build_initial_solution
 from segment.stc.solver import STCALNS
@@ -61,6 +63,21 @@ def test_adaptive_weights_update():
     assert cp is not None
     all_weights = list(cp.wd.values()) + list(cp.wr.values()) + list(cp.wl.values())
     assert any(abs(w - 1.0) > 1e-12 for w in all_weights)
+
+
+def test_default_audit_fires_and_matches_full_replay():
+    sc, field, lib = _setup()
+    solver = STCALNS(sc, lib, field)   # default audit_interval=50 enabled
+    initial = build_initial_solution(sc, lib)
+    res = solver.solve(initial, iterations=120, method_seed=11)
+    # the periodic full-replay audit actually fired during the run
+    assert res.evaluator_calls["audits"] > 0
+    # the final (incrementally-evaluated) result still matches full replay
+    full = evaluate_solution(sc, lib, res.best_solution, field,
+                             default_objective_spec(sc, lib))
+    assert res.best_result.makespan_s == pytest.approx(full.makespan_s)
+    assert res.best_result.total_delay_s == pytest.approx(full.total_delay_s)
+    assert res.best_result.feasible == full.feasible
 
 
 def test_checkpoint_resume_matches_uninterrupted():
