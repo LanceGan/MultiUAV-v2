@@ -15,8 +15,8 @@ from segment.stc.types import (
 def _slot(t, sector, pre_bits, alloc_hz, full_rate=1e6):
     return TimelineSlot(
         time_start_s=t, time_end_s=t + 0.5, edge_id=0, candidate_id="c",
-        position_m=(0.0, 0.0), airborne=True, pre_buffer_bits=pre_bits,
-        post_buffer_bits=0.0 if pre_bits > 0.0 else 0.0,
+        source=-1, target=1, position_m=(0.0, 0.0), airborne=True,
+        pre_buffer_bits=pre_bits, post_buffer_bits=0.0 if pre_bits > 0.0 else 0.0,
         active_uploader=(pre_bits > 0.0), serving_sector=sector,
         allocated_bandwidth_hz=alloc_hz, rate_bps=full_rate,
         uploaded_bits=0.0, g2a_outage=0.0, holding=False, service_event="")

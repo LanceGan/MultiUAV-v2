@@ -115,10 +115,11 @@ def test_final_upload_slot_records_prebuffer_active_and_conflicting():
     def slot(u, pre, post, sector, alloc):
         return TimelineSlot(
             time_start_s=0.0, time_end_s=0.5, edge_id=0, candidate_id="c",
-            position_m=(0.0, 0.0), airborne=True, pre_buffer_bits=pre,
-            post_buffer_bits=post, active_uploader=(pre > 0.0),
-            serving_sector=sector, allocated_bandwidth_hz=alloc,
-            rate_bps=1e6, uploaded_bits=pre - post, g2a_outage=0.1,
+            source=-1, target=1, position_m=(0.0, 0.0), airborne=True,
+            pre_buffer_bits=pre, post_buffer_bits=post,
+            active_uploader=(pre > 0.0), serving_sector=sector,
+            allocated_bandwidth_hz=alloc, rate_bps=1e6,
+            uploaded_bits=pre - post, g2a_outage=0.1,
             holding=False, service_event="")
 
     # both UAVs have pre-buffer > 0 but drain to zero in this (final) slot

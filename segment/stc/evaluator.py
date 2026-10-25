@@ -18,6 +18,7 @@ import hashlib
 import numpy as np
 
 from segment.stc.types import (
+    BalanceMetrics,
     EvaluationResult,
     ObjectiveSpec,
     ReferenceValues,
@@ -178,6 +179,8 @@ def evaluate_solution(scenario, library, solution, field, objective_spec,
                         time_end_s=t_end,
                         edge_id=edge[u],
                         candidate_id=cand.candidate_id,
+                        source=cand.source,
+                        target=cand.target,
                         position_m=(float(p[0]), float(p[1])),
                         airborne=True,
                         pre_buffer_bits=pre_buf[u],
@@ -236,10 +239,28 @@ def evaluate_solution(scenario, library, solution, field, objective_spec,
         timelines = ()
 
     objective = float("inf") if not feasible else objective_spec.score(makespan, total_delay)
+
+    # Task-balance reporting (spec §1.5): secondary, never folded into the
+    # objective.  A UAV that never completes before the deadline records NaN.
+    completion_times = tuple(
+        (float(completion[u]) if completion[u] is not None else float("nan"))
+        for u in range(n_uav))
+    comp_arr = np.asarray(completion_times, dtype=float)
+    if np.all(np.isnan(comp_arr)):
+        t_avg = 0.0
+        sigma_t = 0.0
+        t_range = 0.0
+    else:
+        t_avg = float(np.nanmean(comp_arr))
+        sigma_t = float(np.nanstd(comp_arr))
+        t_range = float(np.nanmax(comp_arr) - np.nanmin(comp_arr))
+    balance = BalanceMetrics(completion_times_s=completion_times,
+                             t_avg_s=t_avg, sigma_t_s=sigma_t, t_range_s=t_range)
+
     return EvaluationResult(
         feasible=feasible, makespan_s=makespan, total_delay_s=total_delay,
         outage_ratio=outage_ratio, violations=violations, timelines=timelines,
-        objective=objective,
+        objective=objective, balance=balance,
     )
 
 

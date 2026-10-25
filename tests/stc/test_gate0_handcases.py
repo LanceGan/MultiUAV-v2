@@ -11,7 +11,9 @@ import pytest
 from segment.stc.conflicts import build_conflict_report
 from segment.stc.evaluator import evaluate_solution
 from segment.stc.types import (
+    EdgeOccurrence,
     ObjectiveSpec,
+    PairwiseConflictWindow,
     PlanSolution,
     RadioSample,
     ReferenceValues,
@@ -112,6 +114,10 @@ def test_one_uav_one_task_no_payload():
     assert res.makespan_s == pytest.approx(8.0)   # serve at slot 3, terminal at slot 7
     assert res.total_delay_s == pytest.approx(0.0)  # no payload, no upload
     assert len(res.timelines[0].slots) == 8
+    assert res.balance.completion_times_s == pytest.approx((8.0,))
+    assert res.balance.t_avg_s == pytest.approx(8.0)
+    assert res.balance.sigma_t_s == pytest.approx(0.0)
+    assert res.balance.t_range_s == pytest.approx(0.0)
 
 
 def test_one_uav_exactly_two_upload_slots():
@@ -145,6 +151,15 @@ def test_two_uavs_share_one_sector_one_slot():
     rep = build_conflict_report(res, 1e6, 1.0)
     assert rep.total_overlap_s == pytest.approx(1.0)   # exactly one shared slot
     assert rep.lost_bits == pytest.approx(1.0e6)       # 2 x 5e5
+    # the conflict is attributed to each UAV's exact edge occurrence
+    assert set(rep.edge_hotspots) == {
+        EdgeOccurrence(0, 1, 0, 2, "t02"),
+        EdgeOccurrence(1, 1, 1, 2, "t12"),
+    }
+    for occ, val in rep.edge_hotspots.items():
+        assert val == pytest.approx(5.0e5)
+    assert rep.pairwise_windows == (
+        PairwiseConflictWindow(0, 1, 0, 1, 1, 4.0, 5.0, 1.0e6),)
     # the shared slot is each UAV's final upload slot (buffer drains to zero)
     for tl in res.timelines:
         active = [s for s in tl.slots if s.active_uploader]
@@ -170,6 +185,8 @@ def test_two_uavs_different_sectors_no_conflict():
     rep = build_conflict_report(res, 1e6, 1.0)
     assert rep.total_overlap_s == 0.0
     assert rep.lost_bits == 0.0
+    assert rep.edge_hotspots == {}
+    assert rep.pairwise_windows == ()
 
 
 def test_one_uav_waiting_outside_arrival_radius():

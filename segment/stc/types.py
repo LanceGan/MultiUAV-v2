@@ -127,8 +127,10 @@ class TimelineSlot:
     """One synchronous evaluator slot for one UAV.
 
     All quantities are SI.  ``edge_id`` is the route-edge index for this UAV
-    (``uav_id`` lives on the enclosing :class:`UAVTimeline`), so a later task can
-    key hotspots by ``(uav_id, route_edge_index, source, target, candidate_id)``.
+    (``uav_id`` lives on the enclosing :class:`UAVTimeline`), and ``source`` /
+    ``target`` are the directed edge's task ids (``-1`` is the depot, ``K`` is
+    the terminal), so a later task can key hotspots by
+    ``(uav_id, route_edge_index, source, target, candidate_id)``.
 
     ``pre_buffer_bits`` is the buffer at the *start* of the slot (before this
     slot's upload); ``active_uploader`` is exactly ``pre_buffer_bits > 0``, so a
@@ -141,6 +143,8 @@ class TimelineSlot:
     time_end_s: float
     edge_id: int
     candidate_id: str
+    source: int
+    target: int
     position_m: tuple
     airborne: bool
     pre_buffer_bits: float
@@ -171,6 +175,19 @@ class ViolationVector:
 
 
 @dataclass(frozen=True)
+class BalanceMetrics:
+    """Task-balance reporting (spec §1.5): per-UAV completion times and spread.
+
+    Reported alongside the objective, never folded into it.  A UAV that never
+    completes before the deadline records ``NaN`` in ``completion_times_s``.
+    """
+    completion_times_s: tuple    # T_u per UAV (seconds; NaN if never completed)
+    t_avg_s: float
+    sigma_t_s: float
+    t_range_s: float
+
+
+@dataclass(frozen=True)
 class EvaluationResult:
     feasible: bool
     makespan_s: float
@@ -179,10 +196,51 @@ class EvaluationResult:
     violations: ViolationVector
     timelines: tuple
     objective: float = float("inf")
+    balance: BalanceMetrics = None
+
+
+@dataclass(frozen=True)
+class EdgeOccurrence:
+    """One execution of a directed edge by one UAV.
+
+    Identifies the exact edge occurrence so a destroy/path-switch operator can
+    target it: ``uav_id`` (timeline owner), ``route_edge_index`` (the slot's
+    ``edge_id``), the edge's ``source``/``target`` task ids, and the selected
+    ``candidate_id``.
+    """
+    uav_id: int
+    route_edge_index: int
+    source: int
+    target: int
+    candidate_id: str
+
+
+@dataclass(frozen=True)
+class PairwiseConflictWindow:
+    """One merged pairwise conflict interval.
+
+    A maximal run of adjacent slots in which two UAVs both upload in the same
+    sector.  A sector or route-edge change splits the window; an empty buffer
+    (no active uploader) creates no window.  ``lost_bits`` is the combined
+    exclusive-vs-shared loss over the window.
+    """
+    uav_a: int
+    uav_b: int
+    sector: int
+    edge_a: int
+    edge_b: int
+    start_s: float
+    end_s: float
+    lost_bits: float
 
 
 @dataclass(frozen=True)
 class ConflictReport:
+    """Edge-time-sector conflict attribution (spec §6).
+
+    ``edge_hotspots`` maps :class:`EdgeOccurrence` -> lost bits; ``pairwise_windows``
+    is a tuple of :class:`PairwiseConflictWindow`.
+    """
     total_overlap_s: float
     lost_bits: float
     per_uav_loss: tuple
