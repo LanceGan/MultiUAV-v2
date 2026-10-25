@@ -1,5 +1,10 @@
 # MultiUAV 巡检 (Multi-UAV Inspection) — 阶段一重构
 
+> ⚠️ **最终方法 STC-ALNS（2026-10-25）**：本论文的正式通信感知巡检方法在
+> `segment/stc/`（时空扇区冲突感知 ALNS）。实验协议与闸门见
+> [`docs/stc-experiment-protocol.md`](docs/stc-experiment-protocol.md)，整体思路见
+> [`仿真实验.md`](仿真实验.md)。下方「三层流水线」是旧设计的**历史记录**，保留供回溯。
+
 面向**真实可复现**的多机（Multi-UAV）巡检研究重构。本仓库在单机已验证的通信模型
 （radio map，3GPP RMa 信道）基础上，加入多机任务分配、航迹规划、序列决策与
 端到端实验编排，目标是让每一处实验脚本都能一键复现论文结果。
@@ -48,12 +53,18 @@ configs/          场景参数（JSON，可复现）
 assignment/       层 1：任务分配（聚类）
 sequence/         层 2：序列决策（含 radio_path 边代价采样）
 trajectory/       层 3：航迹规划（env / td3 / train / test / replay）
-experiment/       实验编排（run_assign / run_seq / run_traj / run_end2end / run_all / evaluate）
-plots/            自动绘图（plot_results.py）
+segment/          新设计（STC-ALNS，最终方法）
+  segment/stc/     同步评价器 / 冲突归因 / STC-ALNS / 六系统基线 / 精确基准 / 统计 / 溯源
+  segment/sac.py   SAC 局部轨迹（学习型基线执行器）
+experiment/       实验编排（run_assign / run_seq / run_traj / run_end2end / run_all / evaluate
+                  及 STC 的 run_stc_segment_gate / evaluator_audit / main / ablation / scale / gates）
+plots/            自动绘图（plot_results.py + plot_stc_results.py 只读冻结 run）
+docs/             设计/计划（specs、plans、stc-experiment-protocol.md）
 results/datas/    用户位置数据（Users_20/30/40.txt，x,y,h 三列，单位 100m）
 results/logs/     运行产出（*.metrics.json / *.npz / *.log，git 忽略）
 results/figs/     论文图（*.png，git 忽略）
 results/models/   训练模型（git 忽略）
+results/runs/     STC 冻结 run（manifest.json + 密封产物，git 忽略）
 tests/            pytest 测试
 ```
 
