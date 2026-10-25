@@ -7,6 +7,7 @@ solution.  Deterministic under a fixed ``method_seed``.
 
 import numpy as np
 
+from segment.stc.conflicts import build_conflict_report
 from segment.stc.evaluator import compute_reference, feasibility_rank
 from segment.stc.incremental import EvaluationCache
 from segment.stc.stc_operators import (
@@ -54,6 +55,8 @@ class STCALNS:
 
         cur = initial
         cur_res = cache.base_result
+        ctx.conflict = build_conflict_report(cur_res, self.scenario.limits.bandwidth_hz,
+                                             self.scenario.limits.delta_t_s)
         best_feasible = initial if cur_res.feasible else None
         best_feasible_res = cur_res if cur_res.feasible else None
         T = self.T0
@@ -99,6 +102,8 @@ class STCALNS:
                 else:
                     score = self.score_accept
                 cur, cur_res = new, new_res
+                ctx.conflict = build_conflict_report(new_res, self.scenario.limits.bandwidth_hz,
+                                                     self.scenario.limits.delta_t_s)
             for op in chosen:
                 scores[op] += score
                 uses[op] += 1
