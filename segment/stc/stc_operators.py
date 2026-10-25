@@ -20,7 +20,7 @@ from segment.stc.evaluator import (
     default_objective_spec,
     evaluate_solution,
 )
-from segment.stc.operators import _edges, _plan
+from segment.stc.operators import _edges, _pick_candidate, _plan
 from segment.stc.slsqp_refine import candidate_cost
 from segment.stc.types import PlanSolution
 
@@ -34,10 +34,35 @@ class SearchContext:
     conflict: object = None
     result: object = None
     objective_spec: object = None
+    marginal_full_calls: int = 0
 
 
-def _plan_routes(routes, scenario, library):
-    return _plan(tuple(tuple(r) for r in routes), scenario, library)
+def _plan_routes(routes, scenario, library, original=None):
+    """Build candidate ids for ``routes``, preserving ``original``'s choices.
+
+    When ``original`` is given, every edge ``(src, tgt)`` that already existed in
+    ``original`` keeps its (possibly path-switched) candidate id; only newly
+    created edges (from a removal/reinsertion) receive a fresh cheapest-rankable
+    candidate.  Without ``original`` every edge gets the cheapest candidate.
+    """
+    if original is None:
+        return _plan(tuple(tuple(r) for r in routes), scenario, library)
+    dt = scenario.limits.delta_t_s
+    kept = {}
+    for r, cids in zip(original.routes, original.candidate_ids):
+        for (s, t), cid in zip(_edges(r, scenario.n_tasks), cids):
+            kept[(s, t)] = cid
+    new_cids = []
+    for r in routes:
+        cids = []
+        for s, t in _edges(tuple(r), scenario.n_tasks):
+            if (s, t) in kept:
+                cids.append(kept[(s, t)])
+            else:
+                cids.append(_pick_candidate(library, s, t, dt))
+        new_cids.append(tuple(cids))
+    return PlanSolution(routes=tuple(tuple(r) for r in routes),
+                        candidate_ids=tuple(new_cids))
 
 
 def _missing_tasks(solution, K):
@@ -66,7 +91,13 @@ def _sync_rank(result):
 
 
 def _eval_solution(context, solution):
-    """Real synchronous marginal evaluation through the authoritative evaluator."""
+    """Real synchronous marginal evaluation through the authoritative evaluator.
+
+    Each call is a full ``evaluate_solution`` and is counted on
+    ``context.marginal_full_calls`` so the paper's evaluator-calls table stays
+    honest about the O(U·K) evaluations spent inside conflict-aware repair.
+    """
+    context.marginal_full_calls += 1
     spec = context.objective_spec
     if spec is None:
         spec = default_objective_spec(context.scenario, context.library)
@@ -86,7 +117,7 @@ def random_removal(solution, context, rng, q=2):
     removed = [flat[i] for i in rng.choice(len(flat), size=q, replace=False)]
     for u, i in sorted(removed, reverse=True):
         del routes[u][i]
-    return _plan_routes(routes, context.scenario, context.library)
+    return _plan_routes(routes, context.scenario, context.library, solution)
 
 
 def worst_cost_removal(solution, context, rng, q=2):
@@ -110,7 +141,7 @@ def worst_cost_removal(solution, context, rng, q=2):
                       key=lambda x: (x[0], -x[1]))
     for u, i in removals:
         del routes[u][i]
-    return _plan_routes(routes, scenario, context.library)
+    return _plan_routes(routes, scenario, context.library, solution)
 
 
 def critical_route_removal(solution, context, rng, q=2):
@@ -126,7 +157,7 @@ def critical_route_removal(solution, context, rng, q=2):
         u = int(np.argmax([len(r) for r in routes]))
     for _ in range(min(q, len(routes[u]))):
         routes[u].pop()
-    return _plan_routes(routes, context.scenario, context.library)
+    return _plan_routes(routes, context.scenario, context.library, solution)
 
 
 def conflict_hotspot_removal(solution, context, rng, q=2):
@@ -152,7 +183,7 @@ def conflict_hotspot_removal(solution, context, rng, q=2):
             if t in r:
                 r.remove(t)
                 break
-    return _plan_routes(routes, context.scenario, context.library)
+    return _plan_routes(routes, context.scenario, context.library, solution)
 
 
 def sector_related_removal(solution, context, rng, q=2):
@@ -173,7 +204,7 @@ def sector_related_removal(solution, context, rng, q=2):
             removed += 1
         if removed >= q:
             break
-    return _plan_routes(routes, context.scenario, context.library)
+    return _plan_routes(routes, context.scenario, context.library, solution)
 
 
 def infeasibility_removal(solution, context, rng, q=2):
@@ -197,14 +228,22 @@ def infeasibility_removal(solution, context, rng, q=2):
             removed += 1
         if removed >= q:
             break
-    return _plan_routes(routes, scenario, context.library)
+    return _plan_routes(routes, scenario, context.library, solution)
 
 
 # --------------------------------------------------------------------------- #
 # repair
 # --------------------------------------------------------------------------- #
 
-def cheapest_insertion(solution, context, rng):
+def cheapest_proxy_insertion(solution, context, rng):
+    """Insert each missing task at the cheapest *single-UAV proxy* position.
+
+    This is a proxy-only insertion (``_routes_cost`` = flight time + upload
+    delay under exclusive bandwidth); it does NOT verify synchronous
+    feasibility.  Feasibility is enforced downstream by the solver's
+    feasibility-first acceptance (spec §7.7), so the operator is named honestly
+    rather than claiming to be a "feasible" insertion.
+    """
     K = context.scenario.n_tasks
     routes = [list(r) for r in solution.routes]
     for t in _missing_tasks(solution, K):
@@ -218,7 +257,7 @@ def cheapest_insertion(solution, context, rng):
                     best = (c, u, pos)
         _, u, pos = best
         routes[u].insert(pos, t)
-    return _plan_routes(routes, context.scenario, context.library)
+    return _plan_routes(routes, context.scenario, context.library, solution)
 
 
 def regret2_insertion(solution, context, rng):
@@ -242,7 +281,7 @@ def regret2_insertion(solution, context, rng):
         _, t, (c, u, pos) = best_choice
         routes[u].insert(pos, t)
         missing.remove(t)
-    return _plan_routes(routes, context.scenario, context.library)
+    return _plan_routes(routes, context.scenario, context.library, solution)
 
 
 def makespan_balancing_insertion(solution, context, rng):
@@ -257,7 +296,7 @@ def makespan_balancing_insertion(solution, context, rng):
             comps = [len(r) for r in routes]
         u = int(np.argmin(comps))
         routes[u].append(t)
-    return _plan_routes(routes, context.scenario, context.library)
+    return _plan_routes(routes, context.scenario, context.library, solution)
 
 
 def conflict_aware_insertion(solution, context, rng):
@@ -285,7 +324,7 @@ def conflict_aware_insertion(solution, context, rng):
                     best = (key, u, pos)
         _, u, pos = best
         routes[u].insert(pos, t)
-    return _plan_routes(routes, context.scenario, context.library)
+    return _plan_routes(routes, context.scenario, context.library, solution)
 
 
 def _sector_entropy(candidate):
@@ -326,7 +365,7 @@ def sector_diversity_insertion(solution, context, rng):
                     best = (score, u, pos)
         _, u, pos = best
         routes[u].insert(pos, t)
-    return _plan_routes(routes, scenario, context.library)
+    return _plan_routes(routes, scenario, context.library, solution)
 
 
 # --------------------------------------------------------------------------- #
@@ -344,7 +383,7 @@ def relocate(solution, context, rng):
     dst_u = int(rng.randint(len(routes)))
     pos = int(rng.randint(len(routes[dst_u]) + 1))
     routes[dst_u].insert(pos, t)
-    return _plan_routes(routes, context.scenario, context.library)
+    return _plan_routes(routes, context.scenario, context.library, solution)
 
 
 def swap(solution, context, rng):
@@ -355,7 +394,7 @@ def swap(solution, context, rng):
     idx = rng.choice(len(pos), size=2, replace=False)
     (u1, i1), (u2, i2) = pos[idx[0]], pos[idx[1]]
     routes[u1][i1], routes[u2][i2] = routes[u2][i2], routes[u1][i1]
-    return _plan_routes(routes, context.scenario, context.library)
+    return _plan_routes(routes, context.scenario, context.library, solution)
 
 
 def two_opt(solution, context, rng):
@@ -366,7 +405,7 @@ def two_opt(solution, context, rng):
     i = int(rng.randint(0, len(routes[u]) - 2))
     j = int(rng.randint(i + 2, len(routes[u]) + 1))
     routes[u][i:j] = reversed(routes[u][i:j])
-    return _plan_routes(routes, context.scenario, context.library)
+    return _plan_routes(routes, context.scenario, context.library, solution)
 
 
 def route_tail_exchange(solution, context, rng):
@@ -381,7 +420,7 @@ def route_tail_exchange(solution, context, rng):
     tail2 = routes[u2][i2:]
     routes[u1] = routes[u1][:i1] + tail2
     routes[u2] = routes[u2][:i2] + tail1
-    return _plan_routes(routes, context.scenario, context.library)
+    return _plan_routes(routes, context.scenario, context.library, solution)
 
 
 def path_switch(solution, context, rng):
@@ -412,7 +451,7 @@ destroy_operators = {
     "infeasibility_removal": infeasibility_removal,
 }
 repair_operators = {
-    "cheapest_insertion": cheapest_insertion,
+    "cheapest_proxy_insertion": cheapest_proxy_insertion,
     "regret2_insertion": regret2_insertion,
     "makespan_balancing_insertion": makespan_balancing_insertion,
     "conflict_aware_insertion": conflict_aware_insertion,

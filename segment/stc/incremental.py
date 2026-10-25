@@ -72,6 +72,24 @@ def _results_match(a, b, tol=1e-6):
         return False
     if abs(a.total_delay_s - b.total_delay_s) > tol:
         return False
+    # per-UAV G2A outage ratio (a divergence here must not go undetected)
+    if len(a.outage_ratio) != len(b.outage_ratio):
+        return False
+    for x, y in zip(a.outage_ratio, b.outage_ratio):
+        if abs(x - y) > tol:
+            return False
+    # full violation vector
+    va, vb = a.violations, b.violations
+    if va.unserved_tasks != vb.unserved_tasks:
+        return False
+    if va.upload_failures != vb.upload_failures:
+        return False
+    if abs(va.outage_excess - vb.outage_excess) > tol:
+        return False
+    if va.deadline_exceeded != vb.deadline_exceeded:
+        return False
+    if va.wait_exceeded != vb.wait_exceeded:
+        return False
     return True
 
 
@@ -139,7 +157,6 @@ class EvaluationCache:
         """
         affected, per_uav_earliest = solution_diff(
             self.base_solution, solution, self.scenario.n_tasks)
-        self.incremental_calls += 1
 
         if not affected:
             # no change: honest cache hit, zero slots recomputed.  Set the
@@ -150,11 +167,13 @@ class EvaluationCache:
 
         slot = self._resume_slot(per_uav_earliest)
         if slot == 0:
-            # the earliest change is at the very start: fresh initial state for
-            # the new solution (airborne/done/edge structure may differ, e.g. a
-            # task moved onto a previously-idle UAV).
+            # the earliest change is at the very start: a fresh full replay
+            # (first edge changed / task moved onto a previously-idle UAV).
+            # This is a full evaluation, not an incremental resume.
+            self.full_calls += 1
             state = _init_state(self.scenario, solution)
         else:
+            self.incremental_calls += 1
             state = self._resume_state(slot)
         new_snapshots = {}
 

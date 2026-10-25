@@ -42,6 +42,7 @@ class SolverCheckpoint:
     cache: object
     objective_spec: object
     conflict: object
+    marginal_full_calls: int
 
 
 class STCALNS:
@@ -110,6 +111,7 @@ class STCALNS:
         ctx.cache = cp.cache
         ctx.result = cp.cur_res
         ctx.conflict = cp.conflict
+        ctx.marginal_full_calls = cp.marginal_full_calls
         return dict(rng=rng, ctx=ctx, cache=cp.cache,
                     objective_spec=cp.objective_spec, cur=cp.cur,
                     cur_res=cp.cur_res, wd=dict(cp.wd), wr=dict(cp.wr),
@@ -126,7 +128,8 @@ class STCALNS:
             wd=dict(st["wd"]), wr=dict(st["wr"]), wl=dict(st["wl"]),
             scores=dict(st["scores"]), uses=dict(st["uses"]), T=st["T"],
             trace=list(st["trace"]), cache=st["cache"],
-            objective_spec=st["objective_spec"], conflict=st["ctx"].conflict)
+            objective_spec=st["objective_spec"], conflict=st["ctx"].conflict,
+            marginal_full_calls=st["ctx"].marginal_full_calls)
 
     # ------------------------------------------------------------------ #
 
@@ -242,4 +245,5 @@ class STCALNS:
                             evaluator_calls={"full": cache.full_calls,
                                              "incremental": cache.incremental_calls,
                                              "recomputed_slots": cache.recomputed_slots,
-                                             "audits": cache.audits})
+                                             "audits": cache.audits,
+                                             "marginal_full_calls": ctx.marginal_full_calls})

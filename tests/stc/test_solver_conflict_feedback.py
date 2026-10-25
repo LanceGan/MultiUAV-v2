@@ -54,6 +54,16 @@ def test_solve_traces_conflict_feedback():
     assert res.evaluator_calls["incremental"] > 0
 
 
+def test_solver_surfaces_marginal_full_calls():
+    sc, field, lib = _setup()
+    solver = STCALNS(sc, lib, field)
+    initial = build_initial_solution(sc, lib)
+    res = solver.solve(initial, iterations=60, method_seed=9)
+    assert "marginal_full_calls" in res.evaluator_calls
+    # conflict-aware repair (which does real sync evals) is picked at least once
+    assert res.evaluator_calls["marginal_full_calls"] > 0
+
+
 def test_adaptive_weights_update():
     sc, field, lib = _setup()
     solver = STCALNS(sc, lib, field, segment=5, rho=0.5)

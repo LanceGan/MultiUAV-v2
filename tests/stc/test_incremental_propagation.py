@@ -129,6 +129,39 @@ def test_noop_commit_does_not_resurrect_rejected_move():
     assert inc.total_delay_s == pytest.approx(full.total_delay_s)
 
 
+def test_first_edge_move_counts_as_full_not_incremental():
+    sc, field, lib = _setup(4)
+    base = _sol(sc, lib, [(0, 1, 2), (3,)])
+    moved = _sol(sc, lib, [(2, 0, 1), (3,)])   # first edge changed (depot -> 2)
+
+    cache = EvaluationCache.from_full(sc, lib, field, base, _spec())
+    assert cache.full_calls == 1
+    cache.evaluate_after_move(moved, frozenset({0}), 0)
+    # a resume-from-slot-0 is a full replay, not an incremental one
+    assert cache.full_calls == 2
+    assert cache.incremental_calls == 0
+
+
+def test_audit_detects_outage_ratio_divergence(monkeypatch):
+    sc, field, lib = _setup(4)
+    base = _sol(sc, lib, [(0, 1, 2), (3,)])
+    moved = _sol(sc, lib, [(0, 2, 1), (3,)])
+    cache = EvaluationCache.from_full(sc, lib, field, base, _spec(), audit_interval=1)
+
+    import segment.stc.incremental as inc_module
+
+    def wrong(sc_, lib_, sol_, field_, spec_, keep_timelines=True):
+        r = real_evaluate_solution(sc_, lib_, sol_, field_, spec_, keep_timelines)
+        # diverge only in per-UAV outage ratio (feasible/makespan/delay unchanged),
+        # which the old makespan/delay-only comparison would have missed
+        return dataclasses.replace(
+            r, outage_ratio=tuple(x + 0.5 for x in r.outage_ratio))
+
+    monkeypatch.setattr(inc_module, "evaluate_solution", wrong)
+    with pytest.raises(IncrementalDivergenceError):
+        cache.evaluate_after_move(moved, frozenset({0}), 1)
+
+
 def test_periodic_full_replay_audit_detects_divergence(monkeypatch):
     sc, field, lib = _setup(4)
     base = _sol(sc, lib, [(0, 1, 2), (3,)])

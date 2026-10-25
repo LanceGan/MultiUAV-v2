@@ -117,3 +117,14 @@ def test_conflict_aware_insertion_chooses_b():
     repaired = conflict_aware_insertion(destroyed, ctx, rng)
     # the missing task (2) must land in UAV 1 after task 1 (option B), not UAV 0
     assert repaired.routes == ((0,), (1, 2))
+
+
+def test_conflict_aware_insertion_counts_internal_evals():
+    sc, field, lib = _fixture()
+    destroyed = _plan([(0,), (1,)], lib, sc)
+    ctx = SearchContext(scenario=sc, library=lib, field=field, objective_spec=_spec())
+    rng = np.random.RandomState(0)
+    conflict_aware_insertion(destroyed, ctx, rng)
+    # the O(U·K) full evaluations inside the operator are counted (visible to
+    # SearchResult.evaluator_calls via the solver), not silently bypassed
+    assert ctx.marginal_full_calls > 0

@@ -75,4 +75,8 @@ def test_incremental_counts_calls():
     cache = EvaluationCache.from_full(sc, lib, field, _solution(), _spec())
     assert cache.full_calls == 1
     cache.evaluate_after_move(_solution(), frozenset({0}))
-    assert cache.incremental_calls == 1
+    # a no-op move is an honest cache hit: neither a full nor an incremental
+    # replay, and zero slots recomputed
+    assert cache.incremental_calls == 0
+    assert cache.full_calls == 1
+    assert cache.recomputed_slots == 0
