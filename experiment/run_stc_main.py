@@ -1,187 +1,321 @@
-"""STC main experiment entry point (Task 8 / Task 15).
+"""Complete-CKM, simultaneous-start experiments with sealed replay data.
 
-Runs the six complete-system methods (Region-Distance-Straight,
-Shortest-Balanced-Graph, Jia-EBTAS-style, GATSAC-style, Library-Open-Loop,
-Proposed STC-ALNS) through the SAME synchronous evaluator from ``t=0``, sharing
-one scenario / library / reference / failure rule set, and writes a run-scoped
-summary via :class:`RunContext`.
-
-Supports the shared CLI (``--config/--map-seeds/--task-seeds/--method-seeds/
---dry-run/--run-id/--smoke``) plus ``--uav-nums/--iterations/--spacing-m``.
+DEFAULT_CONFIG documents defaults. Declared top-level JSON values override
+them, then explicit CLI flags override the file. ``solver.iterations`` aliases
+``iterations``. Generator settings completely declare enabled generators.
+Smoke defaults: six tasks, spacing 1000m, reduced generators; explicit settings
+take precedence. The deterministic builder cannot train or invent SAC data.
 """
 
 import argparse
+from collections import Counter
+from copy import deepcopy
+from dataclasses import asdict, is_dataclass
+import itertools
+import json
 import math
 import os
+from pathlib import Path
 import sys
+import time
+
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from segment.stc.library import build_all_pairs_library
+from segment.stc.conflicts import build_conflict_report
+from segment.stc.evaluator import default_objective_spec
+from segment.stc.library import DEFAULT_GENERATOR_CONFIG, build_all_pairs_library
 from segment.stc.radio import PerSectorRadioField
 from segment.stc.run_context import RunContext
 from segment.stc.scenario import load_stc_scenario
 from segment.stc.system_baselines import (
-    METHOD_SPECS,
-    SYSTEM_BASELINE_KEYS,
-    run_system_baseline,
+    BaselineUnavailable, GRAPH_GENS, METHOD_SPECS, SYSTEM_BASELINE_KEYS,
+    run_system_baseline, validate_baseline_availability,
 )
-from segment.stc.types import PlanSolution, STCScenario
+from segment.stc.types import STCScenario
 
-# Reduced generator config + tiny scenario for fast smoke runs.  A* and SLSQP
-# refinement are omitted so a smoke run stays tractable; both the Straight-Hold
-# and communication-aware (comm-waypoint) candidate families remain present.
 SMOKE_GENERATOR_CONFIG = {
     "straight_hold": True,
-    "comm_waypoints": {"grid_shape": (3, 3), "max_waypoints": 1},
+    "comm_waypoints": {"grid_shape": [3, 3], "max_waypoints": 1},
 }
+DEFAULT_CONFIG = {
+    "uav_nums": [2], "map_seeds": [42], "task_seeds": [42],
+    "method_seeds": [0, 1, 2, 3, 4], "methods": list(SYSTEM_BASELINE_KEYS),
+    "iterations": 1000, "spacing_m": 200., "smoke": False, "smoke_tasks": 6,
+    "generator_config": DEFAULT_GENERATOR_CONFIG,
+    "graph_generators": sorted(GRAPH_GENS), "sac_checkpoint": None,
+    "solver": {"rho": .1, "T0": .1, "cooling": .995, "segment": 100,
+               "audit_interval": 50},
+    "score": {"new_best": 3., "improve": 1., "accept": .5, "reject": 0.},
+}
+EXPECTED_ARTIFACTS = ("resolved_config.json", "raw_records.json", "solutions.json",
+                      "timelines.json", "summary.json")
 
 
 def _common_args(parser):
-    parser.add_argument("--config", type=str, default="configs/stc/experiments.json")
-    parser.add_argument("--map-seeds", type=str, default="42")
-    parser.add_argument("--task-seeds", type=str, default="42")
-    parser.add_argument("--method-seeds", type=str, default="0,1,2,3,4")
+    parser.add_argument("--config", default="configs/stc/experiments.json")
+    for flag in ("map-seeds", "task-seeds", "method-seeds", "uav-nums", "methods"):
+        parser.add_argument("--" + flag, default=None)
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--run-id", type=str, default=None)
-    parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--run-id", default=None)
+    parser.add_argument("--smoke", action="store_true", default=None)
+    parser.add_argument("--iterations", type=int, default=None)
+    parser.add_argument("--spacing-m", type=float, default=None)
+
+
+def _reject_constant(token):
+    raise ValueError("non-finite JSON constant %s" % token)
+
+
+def _resolve_config(args):
+    path = Path(args.config)
+    if not path.is_file():
+        raise ValueError("config must be an existing file: %s" % path)
+    declared = json.loads(path.read_text(encoding="utf-8"), parse_constant=_reject_constant)
+    if not isinstance(declared, dict):
+        raise ValueError("config must be a JSON object")
+    unknown = set(declared) - set(DEFAULT_CONFIG)
+    if unknown:
+        raise ValueError("unknown config fields: %s" % sorted(unknown))
+    cfg = deepcopy(DEFAULT_CONFIG)
+    for key, value in declared.items():
+        if key in {"solver", "score"}:
+            if not isinstance(value, dict):
+                raise ValueError("%s must be an object" % key)
+            allowed = set(DEFAULT_CONFIG[key]) | ({"iterations"} if key == "solver" else set())
+            if set(value) - allowed:
+                raise ValueError("unsupported %s settings" % key)
+            cfg[key].update(value)
+        else:
+            cfg[key] = value
+    if "iterations" not in declared and "iterations" in cfg["solver"]:
+        cfg["iterations"] = cfg["solver"]["iterations"]
+    cfg["solver"].pop("iterations", None)
+    for key in ("iterations", "spacing_m", "smoke", "methods", "uav_nums",
+                "map_seeds", "task_seeds", "method_seeds"):
+        value = getattr(args, key)
+        if value is not None:
+            if key in {"methods", "uav_nums", "map_seeds", "task_seeds", "method_seeds"}:
+                value = value.split(",")
+                if key != "methods":
+                    value = [int(x) for x in value]
+            cfg[key] = value
+    if not isinstance(cfg["smoke"], bool):
+        raise ValueError("smoke must be boolean")
+    if cfg["smoke"]:
+        if "spacing_m" not in declared and args.spacing_m is None:
+            cfg["spacing_m"] = 1000.
+        if "generator_config" not in declared:
+            cfg["generator_config"] = deepcopy(SMOKE_GENERATOR_CONFIG)
+    for key in ("uav_nums", "map_seeds", "task_seeds", "method_seeds"):
+        values = cfg[key]
+        if (not isinstance(values, list) or not values
+                or any(type(x) is not int for x in values)
+                or len(values) != len(set(values))):
+            raise ValueError("%s must be a nonempty list of distinct integers" % key)
+    if any(x <= 0 for x in cfg["uav_nums"]):
+        raise ValueError("uav_nums must be positive")
+    if (not isinstance(cfg["methods"], list) or not cfg["methods"]
+            or any(x not in METHOD_SPECS for x in cfg["methods"])
+            or len(cfg["methods"]) != len(set(cfg["methods"]))):
+        raise ValueError("methods must be distinct registered method names")
+    for key, minimum in (("iterations", 0), ("smoke_tasks", 1)):
+        if type(cfg[key]) is not int or cfg[key] < minimum:
+            raise ValueError("%s must be an integer >= %d" % (key, minimum))
+    spacing = cfg["spacing_m"]
+    if (isinstance(spacing, bool) or not isinstance(spacing, (int, float))
+            or not math.isfinite(spacing) or spacing <= 0):
+        raise ValueError("spacing_m must be positive and finite")
+    if not isinstance(cfg["generator_config"], dict):
+        raise ValueError("generator_config must be an object")
+    if (not isinstance(cfg["graph_generators"], list)
+            or any(not isinstance(x, str) for x in cfg["graph_generators"])):
+        raise ValueError("graph_generators must be a list of family names")
+    if cfg["sac_checkpoint"] is not None:
+        if not isinstance(cfg["sac_checkpoint"], str):
+            raise ValueError("sac_checkpoint must be a path or null")
+        checkpoint = Path(cfg["sac_checkpoint"])
+        if not checkpoint.is_absolute():
+            checkpoint = path.resolve().parent / checkpoint
+        cfg["sac_checkpoint"] = str(checkpoint.resolve())
+    json.dumps(cfg, allow_nan=False)
+    return cfg
 
 
 def _small_scenario(base, n_tasks=6):
-    """Smoke scenario reusing the real map (same n_bs/length/map_seed)."""
+    n_tasks = min(n_tasks, base.n_tasks)
     return STCScenario(
         n_uav=base.n_uav, n_tasks=n_tasks,
         task_positions_m=base.task_positions_m[:n_tasks],
-        task_data_bits=base.task_data_bits[:n_tasks],
-        depot_m=base.depot_m, terminal_m=base.terminal_m,
-        limits=base.limits, length_m=base.length_m, width_m=base.width_m,
-        n_bs=base.n_bs, task_seed=base.task_seed, map_seed=base.map_seed)
+        task_data_bits=base.task_data_bits[:n_tasks], depot_m=base.depot_m,
+        terminal_m=base.terminal_m, limits=base.limits, length_m=base.length_m,
+        width_m=base.width_m, n_bs=base.n_bs, task_seed=base.task_seed,
+        map_seed=base.map_seed)
 
 
 def _json_safe(value):
-    """Recursively convert a payload to a JSON-serializable form.
-
-    ``PlanSolution`` provenance entries (e.g. the Proposed STC-ALNS
-    ``initial_solution``) become plain ``routes``/``candidate_ids`` lists.
-    """
-    if isinstance(value, PlanSolution):
-        return {"routes": [list(rt) for rt in value.routes],
-                "candidate_ids": [list(c) for c in value.candidate_ids]}
+    """One strict output path: typed arrays/dataclasses and non-finite -> null."""
+    if is_dataclass(value):
+        return _json_safe(asdict(value))
+    if isinstance(value, np.ndarray):
+        return _json_safe(value.tolist())
+    if isinstance(value, np.generic):
+        return _json_safe(value.item())
     if isinstance(value, dict):
         return {k: _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(x) for x in value]
     if isinstance(value, float) and not math.isfinite(value):
-        return repr(value)  # "inf" / "-inf" / "nan" (valid JSON string)
+        return None
     return value
 
 
-def _result_payload(r):
-    v = r.result.violations
+def _json_bytes(value):
+    return json.dumps(_json_safe(value), sort_keys=True, allow_nan=False,
+                      ensure_ascii=False).encode("utf-8")
+
+
+def _result_payload(r, scenario):
+    result = r.result
+    conflict = build_conflict_report(result, scenario.limits.bandwidth_hz,
+                                     scenario.limits.delta_t_s)
+    waiting = [sum(s.time_end_s - s.time_start_s for s in tl.slots if s.holding)
+               for tl in result.timelines]
     return {
-        "method": r.method,
-        "label": METHOD_SPECS[r.method].label,
-        "proposed": METHOD_SPECS[r.method].proposed,
-        "objective": r.result.objective,
-        "feasible": r.result.feasible,
-        "makespan_s": r.result.makespan_s,
-        "total_delay_s": r.result.total_delay_s,
-        "outage_ratio": list(r.result.outage_ratio),
-        "violations": {
-            "unserved_tasks": v.unserved_tasks,
-            "upload_failures": v.upload_failures,
-            "outage_excess": v.outage_excess,
-            "deadline_exceeded": v.deadline_exceeded,
-            "wait_exceeded": v.wait_exceeded,
-        },
-        "evaluator_calls": r.evaluator_calls,
-        "provenance": _json_safe(r.provenance),
+        "method": r.method, "label": METHOD_SPECS[r.method].label,
+        "proposed": METHOD_SPECS[r.method].proposed, "status": "evaluated",
+        "feasible": result.feasible, "objective": result.objective,
+        "makespan_s": result.makespan_s, "total_delay_s": result.total_delay_s,
+        "outage_ratio": result.outage_ratio, "violations": result.violations,
+        "balance": result.balance, "conflict_lost_bits": conflict.lost_bits,
+        "conflict_duration_s": conflict.total_overlap_s,
+        "conflict_per_uav_lost_bits": conflict.per_uav_loss,
+        "waiting_s": sum(waiting), "per_uav_waiting_s": waiting,
+        "evaluator_calls": r.evaluator_calls, "provenance": r.provenance,
+        "failure_reason": None if result.feasible else "synchronous evaluation infeasible",
     }
 
 
-def _run_scenario(uav_num, map_seed, task_seed, method_seed, args):
+def _run_scenario(uav_num, map_seed, task_seed, cfg, rc):
     base = load_stc_scenario(uav_num, task_seed=task_seed, map_seed=map_seed)
-    sc = _small_scenario(base) if args.smoke else base
-    spacing_m = 1000.0 if args.smoke else args.spacing_m
-    field = PerSectorRadioField.from_scenario(sc, spacing_m=spacing_m)
+    sc = _small_scenario(base, cfg["smoke_tasks"]) if cfg["smoke"] else base
+    field = PerSectorRadioField.from_scenario(sc, spacing_m=cfg["spacing_m"])
+    library = build_all_pairs_library(sc, field, generator_config=cfg["generator_config"])
+    reference = default_objective_spec(sc, library.candidates)
+    prefix = "%d_%d_%d" % (uav_num, map_seed, task_seed)
+    inputs = {}
+    for kind, data in (
+        ("scenario", sc),
+        ("task", {"positions_m": sc.task_positions_m, "data_bits": sc.task_data_bits}),
+        ("map", {"world_hash": field.world_hash}),
+        ("library", [[src, tgt, list(cs)]
+                     for (src, tgt), cs in sorted(library.candidates.items())]),
+    ):
+        inputs[kind] = rc.register_input(kind + "_" + prefix, data=_json_bytes(data))
+    options = {"checkpoint_path": cfg["sac_checkpoint"],
+               "graph_generators": cfg["graph_generators"]}
+    unavailable = {}
+    for method in cfg["methods"]:
+        try:
+            validate_baseline_availability(method, sc, library, **options)
+        except BaselineUnavailable as exc:
+            unavailable[method] = str(exc)
+    records, solutions, timelines = [], [], []
+    solver_config = dict(cfg["solver"])
+    solver_config.update({"score_" + key: val for key, val in cfg["score"].items()})
+    for method_seed in cfg["method_seeds"]:
+        for method in cfg["methods"]:
+            record_id = "%s_%d_%s" % (prefix, method_seed, method)
+            common = {"record_id": record_id, "uav_num": uav_num,
+                      "map_seed": map_seed, "task_seed": task_seed,
+                      "method_seed": method_seed, "method": method,
+                      "reference": reference, "reference_hash": reference.reference.source_hash,
+                      "library_hash": inputs["library"], "input_hashes": inputs,
+                      "world_hash": field.world_hash}
+            start = time.perf_counter()
+            if method in unavailable:
+                payload = dict(status="unavailable", feasible=None, objective=None,
+                               makespan_s=None, total_delay_s=None, outage_ratio=None,
+                               violations=None, balance=None, conflict_lost_bits=None,
+                               conflict_duration_s=None, waiting_s=None,
+                               evaluator_calls={"full": 0, "incremental": 0},
+                               failure_reason=unavailable[method], availability_declared=True,
+                               label=METHOD_SPECS[method].label, proposed=False,
+                               provenance={"required_method": method,
+                                           "checkpoint_path": cfg["sac_checkpoint"]})
+                solution, trace = None, None
+            else:
+                r = run_system_baseline(method, sc, library, field, seed=method_seed,
+                                        method_seed=method_seed, iterations=cfg["iterations"],
+                                        solver_config=solver_config, **options)
+                payload = _result_payload(r, sc)
+                solution, trace = r.solution, r.result.timelines
+            payload["runtime_s"] = time.perf_counter() - start
+            records.append(dict(common, **payload))
+            solutions.append({"record_id": record_id, "solution": solution})
+            timelines.append({"record_id": record_id, "delta_t_s": sc.limits.delta_t_s,
+                              "bandwidth_hz": sc.limits.bandwidth_hz, "timelines": trace})
+    return records, solutions, timelines
 
-    generator_config = SMOKE_GENERATOR_CONFIG if args.smoke else None
-    library = build_all_pairs_library(sc, field, generator_config=generator_config)
 
-    objective_spec = None
-    methods = {}
-    for key in SYSTEM_BASELINE_KEYS:
-        r = run_system_baseline(key, sc, library, field, seed=task_seed,
-                                method_seed=method_seed, iterations=args.iterations)
-        objective_spec = r.objective_spec
-        methods[key] = _result_payload(r)
-
-    return {
-        "uav_num": uav_num, "map_seed": map_seed, "task_seed": task_seed,
-        "method_seed": method_seed,
-        "n_tasks": sc.n_tasks, "n_uav": sc.n_uav, "n_bs": sc.n_bs,
-        "length_m": sc.length_m, "width_m": sc.width_m,
-        "n_edges": len(library.candidates),
-        "n_candidates": sum(len(cs) for cs in library.candidates.values()),
-        "world_hash": field.world_hash,
-        "reference": {
-            "t_ref_s": objective_spec.reference.t_ref_s,
-            "d_ref_s": objective_spec.reference.d_ref_s,
-            "source_hash": objective_spec.reference.source_hash,
-        },
-        "methods": methods,
-    }
+def _assert_coverage(records, cfg):
+    fields = ("uav_num", "map_seed", "task_seed", "method_seed", "method")
+    expected = set(itertools.product(*(cfg[key] for key in
+                   ("uav_nums", "map_seeds", "task_seeds", "method_seeds", "methods"))))
+    actual = Counter(tuple(r[key] for key in fields) for r in records)
+    if (set(actual) != expected or any(n != 1 for n in actual.values())
+            or any(r["status"] not in {"evaluated", "unavailable"} for r in records)
+            or any(r["status"] == "unavailable" and
+                   not (r.get("availability_declared") and r.get("failure_reason"))
+                   for r in records)):
+        raise RuntimeError("method-seed matrix coverage mismatch")
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="STC main experiment")
+    parser = argparse.ArgumentParser(description=__doc__)
     _common_args(parser)
-    parser.add_argument("--uav-nums", type=str, default="2")
-    parser.add_argument("--iterations", type=int, default=1000)
-    parser.add_argument("--spacing-m", type=float, default=200.0)
     args = parser.parse_args(argv)
-
-    map_seeds = [int(s) for s in args.map_seeds.split(",")]
-    task_seeds = [int(s) for s in args.task_seeds.split(",")]
-    method_seeds = [int(s) for s in args.method_seeds.split(",")]
-    uav_nums = [int(s) for s in args.uav_nums.split(",")]
-
+    try:
+        cfg = _resolve_config(args)
+    except (OSError, ValueError, TypeError) as exc:
+        parser.error(str(exc))
     if args.dry_run:
-        print("run matrix: uav_nums=%s map_seeds=%s task_seeds=%s method_seeds=%s"
-              % (uav_nums, map_seeds, task_seeds, method_seeds))
+        print("run matrix: " + json.dumps(cfg, sort_keys=True, allow_nan=False))
         return 0
-
-    rc = RunContext.create("results/runs", "stc_main",
-                           {"config": args.config, "uav_nums": uav_nums,
-                            "map_seeds": map_seeds, "task_seeds": task_seeds,
-                            "method_seeds": method_seeds},
-                           run_id=args.run_id)
-
-    scenarios = []
-    for uav_num in uav_nums:
-        for map_seed in map_seeds:
-            for task_seed in task_seeds:
-                method_seed = method_seeds[0] if method_seeds else 42
-                scenarios.append(_run_scenario(
-                    uav_num, map_seed, task_seed, method_seed, args))
-
-    summary = {
-        "status": "smoke" if args.smoke else "full",
-        "methods": list(SYSTEM_BASELINE_KEYS),
-        "scenarios": scenarios,
-    }
-    rc.write_json("summary", summary)
-    rc.finalize("success")
-    print("run written to %s" % rc.run_dir)
-
-    # Human-readable one-line table.
-    for s in scenarios:
-        line = "uav=%d map=%d task=%d: " % (s["uav_num"], s["map_seed"], s["task_seed"])
-        line += "  ".join("%s=%.3f" % (k, s["methods"][k]["objective"])
-                          for k in SYSTEM_BASELINE_KEYS)
-        print(line)
+    rc = RunContext.create("results/runs", "stc_main", cfg, run_id=args.run_id,
+                           expected=EXPECTED_ARTIFACTS)
+    rc.register_input("config_file", path=args.config)
+    rc.register_input("resolved_config", data=_json_bytes(cfg))
+    if cfg["sac_checkpoint"] and Path(cfg["sac_checkpoint"]).is_file():
+        rc.register_input("checkpoint_sac", path=cfg["sac_checkpoint"])
+    records, solutions, timelines = [], [], []
+    try:
+        for uav_num, map_seed, task_seed in itertools.product(
+                cfg["uav_nums"], cfg["map_seeds"], cfg["task_seeds"]):
+            raw, sol, trace = _run_scenario(uav_num, map_seed, task_seed, cfg, rc)
+            records.extend(raw)
+            solutions.extend(sol)
+            timelines.extend(trace)
+        _assert_coverage(records, cfg)
+        counts = Counter((r["method"], r["status"]) for r in records)
+        summary = {"mode": "smoke" if cfg["smoke"] else "full",
+                   "record_count": len(records),
+                   "unavailable_count": sum(r["status"] == "unavailable" for r in records),
+                   "inventory": [{"method": method, "status": status, "count": count}
+                                 for (method, status), count in sorted(counts.items())]}
+        for name, value in (("resolved_config.json", cfg), ("raw_records.json", records),
+                            ("solutions.json", solutions), ("timelines.json", timelines),
+                            ("summary.json", summary)):
+            rc.write_bytes(name, _json_bytes(value))
+        rc.finalize("success")
+    except Exception:
+        rc.finalize("failed")
+        raise
+    print("run written to %s (%d records, %d unavailable)" % (
+        rc.run_dir, len(records), summary["unavailable_count"]))
     return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

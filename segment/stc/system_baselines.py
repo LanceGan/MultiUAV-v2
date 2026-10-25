@@ -11,9 +11,8 @@ Method names (comparison order):
 - ``region_distance_straight``   Region-Distance-Straight
 - ``shortest_balanced_graph``    Shortest-Balanced-Graph
 - ``jia_ebtas_style``            Jia-EBTAS-style (style reproduction)
-- ``gatsac_style``               GATSAC-style (style reproduction; the SAC
-                                 trajectory layer is approximated by a
-                                 deterministic communication-aware segment)
+- ``gatsac_style``               GATSAC-style (SAC candidates + checkpoint;
+                                 explicit unavailability when absent)
 - ``library_open_loop``          Library-Open-Loop
 - ``proposed_stc_alns``          Proposed STC-ALNS
 
@@ -23,13 +22,13 @@ and sequencing steps wrap it in a :class:`SegmentLibrary` view (only
 ``.candidates`` is read), so a single library object is shared unchanged across
 all six methods.  A caller may also pass a :class:`SegmentLibrary` directly.
 
-Claim integrity: Jia-EBTAS-style and GATSAC-style are labeled *style
-reproductions*.  No exact-author reproduction is claimed; in particular the
-GATSAC SAC layer is documented as approximated by the closest deterministic
-communication-aware segment optimizer, not an SAC reproduction.
+Jia-EBTAS-style and GATSAC-style are style reproductions, not author code.
+Restricted methods never substitute a different trajectory family.
 """
 
 from dataclasses import dataclass
+import hashlib
+from pathlib import Path
 
 from segment.stc.assignment import jia_ebtas, region_partition, spatial_kmeans
 from segment.stc.evaluator import default_objective_spec, evaluate_solution
@@ -50,7 +49,17 @@ from segment.stc.types import (
 
 # Generator labels used to select the segment (trajectory) layer per method.
 STRAIGHT_GENS = frozenset({"straight_hold"})
-COMM_AWARE_GENS = frozenset({"comm_direct", "comm_waypoint", "astar", "slsqp_refined"})
+GRAPH_GENS = frozenset({"astar", "slsqp_refined"})
+COMM_AWARE_GENS = frozenset({"comm_direct", "comm_waypoint"})
+
+
+class BaselineUnavailable(RuntimeError):
+    """A declared method cannot run with this scenario/library/checkpoint."""
+
+    def __init__(self, method, reason):
+        self.method = method
+        self.reason = reason
+        super().__init__("%s unavailable: %s" % (method, reason))
 
 
 @dataclass(frozen=True)
@@ -84,8 +93,7 @@ _METHOD_SPECS = (
                 "deterministic communication-aware segment."),
     _MethodSpec("gatsac_style", "GATSAC-style", False,
                 "Spatial k-means + communication-aware TSP ordering + "
-                "deterministic communication-aware segment (SAC approximated; "
-                "style reproduction)."),
+                "checkpoint-bound SAC trajectories (style reproduction)."),
     _MethodSpec("library_open_loop", "Library-Open-Loop", False,
                 "Library-aware EBTAS + sequencing + best independent candidate, "
                 "with no synchronous conflict feedback."),
@@ -113,15 +121,14 @@ def _route_edges(route, n_tasks):
 def _candidate_ids(library, edges, dt, generator_filter):
     """Best *rankable* candidate per edge by single-UAV cost, filtered by generator.
 
-    Falls back to any rankable candidate when no candidate matches the filter
-    (e.g. a reduced library built with Straight-Hold only).
+    No fallback is allowed: a required family is part of the method identity.
     """
     out = []
     for src, tgt in edges:
-        rankable = [c for c in library[(src, tgt)] if c.rankable]
+        rankable = [c for c in library.get((src, tgt), ()) if c.rankable]
         pool = [c for c in rankable if c.generator in generator_filter]
         if not pool:
-            pool = rankable
+            raise ValueError("no required-family candidate for edge %r" % ((src, tgt),))
         out.append(min(pool, key=lambda c: candidate_cost(c, dt)).candidate_id)
     return tuple(out)
 
@@ -162,7 +169,8 @@ def _region_distance_straight(scenario, library, field, seed):
 def _shortest_balanced_graph(scenario, library, field, seed):
     assign = spatial_kmeans(scenario, seed=seed)
     return _plan_from_clusters(scenario, library, assign.clusters,
-                               distance_nn_2opt, COMM_AWARE_GENS, seed)
+                               distance_nn_2opt,
+                               {c.generator for cs in library.values() for c in cs}, seed)
 
 
 def _jia_ebtas_style(scenario, library, field, seed):
@@ -183,7 +191,8 @@ def _gatsac_style(scenario, library, field, seed):
         return library_aware_sequence(sc, seg, ids, seed=sd)
 
     return _plan_from_clusters(scenario, library, assign.clusters,
-                               sequencer, COMM_AWARE_GENS, seed)
+                               sequencer,
+                               {c.generator for cs in library.values() for c in cs}, seed)
 
 
 _BUILDERS = {
@@ -195,36 +204,37 @@ _BUILDERS = {
 
 _COMPONENTS = {
     "region_distance_straight": dict(assignment="region_partition",
-                                     sequence="distance_nn_2opt",
-                                     trajectory_layer="straight_hold"),
+                                     sequence="distance_nn_2opt"),
     "shortest_balanced_graph": dict(assignment="spatial_kmeans",
-                                    sequence="distance_nn_2opt",
-                                    trajectory_layer="graph_slsqp_comm_aware"),
+                                    sequence="distance_nn_2opt"),
     "jia_ebtas_style": dict(assignment="jia_ebtas",
-                            sequence="jia_time_energy_tsp",
-                            trajectory_layer="deterministic_comm_aware"),
+                            sequence="jia_time_energy_tsp"),
     "gatsac_style": dict(assignment="spatial_kmeans",
-                         sequence="library_aware_sequence",
-                         trajectory_layer="deterministic_comm_aware_approx"),
+                         sequence="library_aware_sequence"),
     "library_open_loop": dict(assignment="library_aware_ebtas",
-                              sequence="library_aware_sequence",
-                              trajectory_layer="best_rankable_candidate"),
+                              sequence="library_aware_sequence"),
 }
 
 _STYLE_NOTES = {
     "jia_ebtas_style": ("Jia-EBTAS-style reproduction: preserves the Jia "
                         "time-energy internal criterion; evaluated on the "
                         "common T/D/O metrics."),
-    "gatsac_style": ("GATSAC-style reproduction: SAC local-trajectory layer "
-                     "approximated by the closest deterministic "
-                     "communication-aware segment optimizer; a style "
-                     "reproduction, not an SAC reproduction."),
+    "gatsac_style": ("GATSAC-style reproduction using checkpoint-bound SAC "
+                     "trajectories; style reproduction, not author-code reproduction."),
 }
 
 
-def _provenance(spec, seed):
+def _selected_generators(solution, library, n_tasks):
+    return sorted({next(c.generator for c in library[edge] if c.candidate_id == cid)
+                   for route, ids in zip(solution.routes, solution.candidate_ids)
+                   for edge, cid in zip(_route_edges(route, n_tasks), ids)})
+
+
+def _provenance(spec, seed, solution, library, n_tasks):
     p = dict(_COMPONENTS[spec.key])
     p.update({"label": spec.label, "proposed": False, "seed": int(seed)})
+    p["trajectory_generators"] = _selected_generators(solution, library, n_tasks)
+    p["trajectory_layer"] = "+".join(p["trajectory_generators"]) or "idle"
     if spec.key == "gatsac_style":
         p["trajectory_note"] = _STYLE_NOTES["gatsac_style"]
     if spec.key == "jia_ebtas_style":
@@ -232,12 +242,64 @@ def _provenance(spec, seed):
     return p
 
 
+def validate_baseline_availability(method, scenario, library, *,
+                                   checkpoint_path=None, graph_generators=None):
+    """Predeclare availability before any method-seed runs; return family view.
+
+    SAC generator labels follow ``drl:SAC:<checkpoint SHA-256>`` (also
+    ``drl:learned-SAC:<hash>``). The hash must match the supplied checkpoint.
+    This consumes existing learned candidates; it never trains or relabels them.
+    """
+    if method not in METHOD_SPECS:
+        raise ValueError("unknown system baseline method %r" % method)
+    candidates = library.candidates if isinstance(library, SegmentLibrary) else library
+    for edge, entries in candidates.items():
+        ids = [c.candidate_id for c in entries]
+        if len(ids) != len(set(ids)):
+            raise ValueError("duplicate candidate_id on edge %r" % (edge,))
+    checkpoint = None
+    if method == "gatsac_style":
+        path = Path(checkpoint_path) if checkpoint_path else None
+        if path is None or not path.is_file():
+            raise BaselineUnavailable(method, "compatible SAC checkpoint file is missing")
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        checkpoint = {"path": str(path.resolve()), "sha256": digest}
+
+        def allowed(c):
+            parts = c.generator.split(":")
+            return (len(parts) == 3 and parts[0] == "drl"
+                    and parts[1].lower().replace("_", "-") in {"sac", "learned-sac"}
+                    and parts[2] == digest)
+    elif method == "region_distance_straight":
+        allowed = lambda c: c.generator in STRAIGHT_GENS
+    elif method == "shortest_balanced_graph":
+        families = GRAPH_GENS if graph_generators is None else frozenset(graph_generators)
+        if not families or not families <= (GRAPH_GENS | COMM_AWARE_GENS):
+            raise ValueError("graph_generators must declare graph/SLSQP or labeled communication families")
+        allowed = lambda c: c.generator in families
+    elif method == "jia_ebtas_style":
+        allowed = lambda c: c.generator in COMM_AWARE_GENS
+    else:
+        allowed = lambda c: True
+
+    view = {edge: tuple(c for c in cs if c.rankable and allowed(c))
+            for edge, cs in candidates.items()}
+    k = scenario.n_tasks
+    edges = ([(-1, t) for t in range(k)]
+             + [(s, t) for s in range(k) for t in range(k + 1) if s != t])
+    missing = [edge for edge in edges if not view.get(edge)]
+    if missing:
+        raise BaselineUnavailable(method, "required trajectory family missing on edge %r" % (missing[0],))
+    return view, checkpoint
+
+
 # --------------------------------------------------------------------------- #
 # Dispatcher
 # --------------------------------------------------------------------------- #
 
 def run_system_baseline(method, scenario, library, field, *, seed=42,
-                        method_seed=42, iterations=1000):
+                        method_seed=42, iterations=1000, checkpoint_path=None,
+                        graph_generators=None, solver_config=None):
     """Run one named complete-system method and return its evaluated result.
 
     Every method is scored through the same :func:`default_objective_spec`
@@ -251,28 +313,37 @@ def run_system_baseline(method, scenario, library, field, *, seed=42,
                          % (method, SYSTEM_BASELINE_KEYS))
 
     candidates = library.candidates if isinstance(library, SegmentLibrary) else library
+    family_view, checkpoint = validate_baseline_availability(
+        method, scenario, library, checkpoint_path=checkpoint_path,
+        graph_generators=graph_generators)
     objective_spec = default_objective_spec(scenario, candidates)
 
     if spec.key == "proposed_stc_alns":
         seg = _seg_view(library, scenario, field)
         initial = build_ebtas_initial_solution(scenario, seg, seed=seed)
-        sr = STCALNS(scenario, candidates, field).solve(
+        sr = STCALNS(scenario, candidates, field, **(solver_config or {})).solve(
             initial, iterations=iterations, method_seed=method_seed)
         return SystemBaselineResult(
             method=spec.key, solution=sr.best_solution, result=sr.best_result,
             objective_spec=objective_spec, evaluator_calls=sr.evaluator_calls,
             provenance={"label": spec.label, "proposed": True,
+                        "iterations_executed": len(sr.search_trace),
+                        "trajectory_generators": _selected_generators(
+                            sr.best_solution, candidates, scenario.n_tasks),
                         "initial_solution": initial})
 
     if spec.key == "library_open_loop":
         seg = _seg_view(library, scenario, field)
         solution = build_ebtas_initial_solution(scenario, seg, seed=seed)
     else:
-        solution = _BUILDERS[spec.key](scenario, candidates, field, seed)
+        solution = _BUILDERS[spec.key](scenario, family_view, field, seed)
 
     result = evaluate_solution(scenario, candidates, solution, field,
                                objective_spec)
+    provenance = _provenance(spec, seed, solution, candidates, scenario.n_tasks)
+    if checkpoint:
+        provenance["checkpoint"] = checkpoint
     return SystemBaselineResult(
         method=spec.key, solution=solution, result=result,
         objective_spec=objective_spec, evaluator_calls={"full": 1},
-        provenance=_provenance(spec, seed))
+        provenance=provenance)
