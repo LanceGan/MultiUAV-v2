@@ -23,8 +23,7 @@ class _MockField:
 def _setup():
     limits = ScenarioLimits(delta_t_s=0.5, v_max_mps=50.0, uav_height_m=100.0,
                             arrive_radius_m=15.0, max_wait_s=60.0,
-                            mission_deadline_s=7200.0, departure_step_s=1.0,
-                            departure_max_s=60.0, bandwidth_hz=1e6,
+                            mission_deadline_s=7200.0, bandwidth_hz=1e6,
                             uplink_power_w=0.2, eps_out=0.35, w_t=0.5, w_d=0.5)
     sc = STCScenario(n_uav=2, n_tasks=4,
                      task_positions_m=tuple((1000.0 + i * 800.0, 2000.0) for i in range(4)),

@@ -55,8 +55,7 @@ def _scenario(n_uav, n_tasks, task_positions, data_bits, depot=(0.0, 0.0),
               max_wait=10.0, bandwidth=1e6, mission_deadline=1000.0):
     limits = ScenarioLimits(delta_t_s=dt, v_max_mps=v_max, uav_height_m=100.0,
                             arrive_radius_m=arrive_radius, max_wait_s=max_wait,
-                            mission_deadline_s=mission_deadline, departure_step_s=1.0,
-                            departure_max_s=60.0, bandwidth_hz=bandwidth,
+                            mission_deadline_s=mission_deadline, bandwidth_hz=bandwidth,
                             uplink_power_w=0.2, eps_out=0.35, w_t=0.5, w_d=0.5)
     return STCScenario(n_uav=n_uav, n_tasks=n_tasks, task_positions_m=task_positions,
                        task_data_bits=data_bits, depot_m=depot, terminal_m=terminal,
@@ -107,8 +106,7 @@ def test_one_uav_one_task_no_payload():
     sc = _scenario(1, 1, ((30.0, 0.0),), (0.0,))
     field = _Field(sc.n_sectors, eff=1.0, outage=0.0)
     lib = _single_task_lib(sc, 0.0)
-    sol = PlanSolution(routes=((0,),), candidate_ids=(("d0", "t1"),),
-                       departure_steps=(0,))
+    sol = PlanSolution(routes=((0,),), candidate_ids=(("d0", "t1"),))
     res = evaluate_solution(sc, lib, sol, field, _spec())
     assert res.feasible is True
     assert res.makespan_s == pytest.approx(8.0)   # serve at slot 3, terminal at slot 7
@@ -120,8 +118,7 @@ def test_one_uav_exactly_two_upload_slots():
     sc = _scenario(1, 1, ((30.0, 0.0),), (1.5e6,))
     field = _Field(sc.n_sectors, eff=1.0, outage=0.0)
     lib = _single_task_lib(sc, 1.5e6)
-    sol = PlanSolution(routes=((0,),), candidate_ids=(("d0", "t1"),),
-                       departure_steps=(0,))
+    sol = PlanSolution(routes=((0,),), candidate_ids=(("d0", "t1"),))
     res = evaluate_solution(sc, lib, sol, field, _spec())
     slots = res.timelines[0].slots
     active = [s for s in slots if s.active_uploader]
@@ -142,8 +139,7 @@ def test_two_uavs_share_one_sector_one_slot():
         (1, 2): [_hand_cand("t12", 1, 2, [(30, 5), (40, 5), (50, 5), (55, 5), (60, 0)], 5e5, sc.n_sectors)],
     }
     sol = PlanSolution(routes=((0,), (1,)),
-                       candidate_ids=(("d0", "t02"), ("d1", "t12")),
-                       departure_steps=(0, 0))
+                       candidate_ids=(("d0", "t02"), ("d1", "t12")))
     res = evaluate_solution(sc, lib, sol, field, _spec())
     assert res.feasible is True
     rep = build_conflict_report(res, 1e6, 1.0)
@@ -167,8 +163,7 @@ def test_two_uavs_different_sectors_no_conflict():
         (1, 2): [_sector_cand("t12", 1, 2, [(70, 0), (60, 0), (55, 0), (50, 0)], 1e6, 1)],
     }
     sol = PlanSolution(routes=((0,), (1,)),
-                       candidate_ids=(("d0", "t02"), ("d1", "t12")),
-                       departure_steps=(0, 0))
+                       candidate_ids=(("d0", "t02"), ("d1", "t12")))
     res = evaluate_solution(sc, lib, sol, field, _spec())
     assert res.feasible is True
     assert res.makespan_s == pytest.approx(6.0)
@@ -181,8 +176,7 @@ def test_one_uav_waiting_outside_arrival_radius():
     sc = _scenario(1, 1, ((30.0, 0.0),), (3.5e6,))
     field = _Field(sc.n_sectors, eff=1.0, outage=0.0)
     lib = _single_task_lib(sc, 3.5e6)
-    sol = PlanSolution(routes=((0,),), candidate_ids=(("d0", "t1"),),
-                       departure_steps=(0,))
+    sol = PlanSolution(routes=((0,),), candidate_ids=(("d0", "t1"),))
     res = evaluate_solution(sc, lib, sol, field, _spec())
     assert res.feasible is True
     assert res.makespan_s == pytest.approx(9.0)   # one extra slot of waiting
@@ -191,28 +185,11 @@ def test_one_uav_waiting_outside_arrival_radius():
     assert holding[0].pre_buffer_bits > 0.0
 
 
-def test_departure_delay_identical_airborne_outage_ratio():
-    sc = _scenario(1, 1, ((30.0, 0.0),), (0.0,))
-    field = _Field(sc.n_sectors, eff=1.0, outage=0.1)
-    lib = _single_task_lib(sc, 0.0)
-    res0 = evaluate_solution(sc, lib, PlanSolution(
-        routes=((0,),), candidate_ids=(("d0", "t1"),), departure_steps=(0,)),
-        field, _spec())
-    res1 = evaluate_solution(sc, lib, PlanSolution(
-        routes=((0,),), candidate_ids=(("d0", "t1"),), departure_steps=(5,)),
-        field, _spec())
-    assert res1.makespan_s == pytest.approx(13.0)   # 8.0 + 5 x delta_t
-    assert res0.makespan_s == pytest.approx(8.0)
-    # outage accrues over identical airborne time -> identical ratio
-    assert res1.outage_ratio == res0.outage_ratio
-
-
 def test_zero_rate_max_wait_failure():
     sc = _scenario(1, 1, ((30.0, 0.0),), (1e6,), max_wait=10.0)
     field = _Field(sc.n_sectors, eff=0.0, outage=0.0)
     lib = _single_task_lib(sc, 1e6, rate=0.0)
-    sol = PlanSolution(routes=((0,),), candidate_ids=(("d0", "t1"),),
-                       departure_steps=(0,))
+    sol = PlanSolution(routes=((0,),), candidate_ids=(("d0", "t1"),))
     res = evaluate_solution(sc, lib, sol, field, _spec())
     assert res.feasible is False
     assert res.violations.wait_exceeded >= 1

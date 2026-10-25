@@ -28,7 +28,7 @@ def _greedy_nn_order(scenario):
 
 def _edges(route, K):
     if not route:
-        return [(-1, K)]  # empty route: depot -> terminal directly
+        return []  # empty route: idle UAV (no segments)
     return ([(-1, route[0])]
             + [(route[i], route[i + 1]) for i in range(len(route) - 1)]
             + [(route[-1], K)])
@@ -38,10 +38,10 @@ def _pick_candidate(library, src, tgt):
     return min(library[(src, tgt)], key=lambda c: candidate_cost(c, 0.5)).candidate_id
 
 
-def _plan(routes, scenario, library, departure_steps):
+def _plan(routes, scenario, library):
     cids = tuple(tuple(_pick_candidate(library, s, t) for s, t in _edges(r, scenario.n_tasks))
                  for r in routes)
-    return PlanSolution(routes=routes, candidate_ids=cids, departure_steps=departure_steps)
+    return PlanSolution(routes=routes, candidate_ids=cids)
 
 
 def build_initial_solution(scenario, library, seed=42):
@@ -50,7 +50,7 @@ def build_initial_solution(scenario, library, seed=42):
     # keep exactly n_uav groups (some empty when n_tasks < n_uav)
     groups = [list(g) for g in np.array_split(order, scenario.n_uav)]
     routes = tuple(tuple(g) for g in groups)
-    return _plan(routes, scenario, library, tuple([0] * len(routes)))
+    return _plan(routes, scenario, library)
 
 
 def _two_opt(sol, scenario, library, rng):
@@ -61,7 +61,7 @@ def _two_opt(sol, scenario, library, rng):
     i = rng.randint(0, len(routes[u]) - 2)
     j = rng.randint(i + 2, len(routes[u]) + 1)
     routes[u][i:j] = reversed(routes[u][i:j])
-    return _plan(tuple(tuple(r) for r in routes), scenario, library, sol.departure_steps)
+    return _plan(tuple(tuple(r) for r in routes), scenario, library)
 
 
 def _result(scenario, library, field, solution, objective_spec):

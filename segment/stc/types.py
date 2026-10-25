@@ -18,8 +18,6 @@ class ScenarioLimits:
     arrive_radius_m: float
     max_wait_s: float
     mission_deadline_s: float
-    departure_step_s: float
-    departure_max_s: float
     bandwidth_hz: float
     uplink_power_w: float
     eps_out: float
@@ -117,7 +115,6 @@ class SegmentLibrary:
 class PlanSolution:
     routes: tuple            # tuple of tuple of task ids (0..K-1)
     candidate_ids: tuple     # tuple of tuple of candidate ids (per traversed edge)
-    departure_steps: tuple   # tuple of int departure-step indices per UAV
 
     def __post_init__(self):
         flat = [t for r in self.routes for t in r]

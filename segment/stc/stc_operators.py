@@ -24,8 +24,8 @@ class SearchContext:
     conflict: object = None
 
 
-def _plan_routes(routes, scenario, library, departure_steps):
-    return _plan(tuple(tuple(r) for r in routes), scenario, library, departure_steps)
+def _plan_routes(routes, scenario, library):
+    return _plan(tuple(tuple(r) for r in routes), scenario, library)
 
 
 def _missing_tasks(solution, K):
@@ -52,7 +52,7 @@ def random_removal(solution, context, rng, q=2):
     removed = [flat[i] for i in rng.choice(len(flat), size=q, replace=False)]
     for u, i in sorted(removed, reverse=True):
         del routes[u][i]
-    return _plan_routes(routes, context.scenario, context.library, solution.departure_steps)
+    return _plan_routes(routes, context.scenario, context.library)
 
 
 def conflict_hotspot_removal(solution, context, rng, q=2):
@@ -63,7 +63,7 @@ def conflict_hotspot_removal(solution, context, rng, q=2):
         u = rng.randint(len(routes))
     for _ in range(min(q, len(routes[u]))):
         routes[u].pop()
-    return _plan_routes(routes, context.scenario, context.library, solution.departure_steps)
+    return _plan_routes(routes, context.scenario, context.library)
 
 
 # --- repair ---
@@ -82,7 +82,7 @@ def cheapest_insertion(solution, context, rng):
                     best = (c, u, pos)
         _, u, pos = best
         routes[u].insert(pos, t)
-    return _plan_routes(routes, context.scenario, context.library, solution.departure_steps)
+    return _plan_routes(routes, context.scenario, context.library)
 
 
 def conflict_aware_insertion(solution, context, rng):
@@ -103,7 +103,7 @@ def conflict_aware_insertion(solution, context, rng):
                     best = (c, u, pos)
         _, u, pos = best
         routes[u].insert(pos, t)
-    return _plan_routes(routes, context.scenario, context.library, solution.departure_steps)
+    return _plan_routes(routes, context.scenario, context.library)
 
 
 # --- local / resource moves ---
@@ -116,7 +116,7 @@ def swap(solution, context, rng):
     idx = rng.choice(len(pos), size=2, replace=False)
     (u1, i1), (u2, i2) = pos[idx[0]], pos[idx[1]]
     routes[u1][i1], routes[u2][i2] = routes[u2][i2], routes[u1][i1]
-    return _plan_routes(routes, context.scenario, context.library, solution.departure_steps)
+    return _plan_routes(routes, context.scenario, context.library)
 
 
 def path_switch(solution, context, rng):
@@ -134,21 +134,11 @@ def path_switch(solution, context, rng):
         cur[e] = cids[(i + 1) % len(cids)]
     new_cids = list(solution.candidate_ids)
     new_cids[u] = tuple(cur)
-    return PlanSolution(routes=solution.routes, candidate_ids=tuple(new_cids),
-                        departure_steps=solution.departure_steps)
-
-
-def departure_shift(solution, context, rng):
-    u = rng.randint(len(solution.routes))
-    dep = list(solution.departure_steps)
-    dep[u] = (dep[u] + rng.randint(1, 5)) % 10
-    return PlanSolution(routes=solution.routes, candidate_ids=solution.candidate_ids,
-                        departure_steps=tuple(dep))
+    return PlanSolution(routes=solution.routes, candidate_ids=tuple(new_cids))
 
 
 destroy_operators = {"random_removal": random_removal,
                      "conflict_hotspot_removal": conflict_hotspot_removal}
 repair_operators = {"cheapest_insertion": cheapest_insertion,
                     "conflict_aware_insertion": conflict_aware_insertion}
-local_operators = {"swap": swap, "path_switch": path_switch,
-                   "departure_shift": departure_shift}
+local_operators = {"swap": swap, "path_switch": path_switch}

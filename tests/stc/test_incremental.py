@@ -34,8 +34,7 @@ class _MockField:
 def _setup():
     limits = ScenarioLimits(delta_t_s=0.5, v_max_mps=50.0, uav_height_m=100.0,
                             arrive_radius_m=15.0, max_wait_s=60.0,
-                            mission_deadline_s=7200.0, departure_step_s=1.0,
-                            departure_max_s=60.0, bandwidth_hz=1e6,
+                            mission_deadline_s=7200.0, bandwidth_hz=1e6,
                             uplink_power_w=0.2, eps_out=0.35, w_t=0.5, w_d=0.5)
     sc = STCScenario(n_uav=2, n_tasks=2,
                      task_positions_m=((1000.0, 2000.0), (3000.0, 2000.0)),
@@ -51,18 +50,19 @@ def _setup():
     return sc, field, lib
 
 
-def _solution(dep=(0, 0)):
+def _solution():
     return PlanSolution(routes=((0,), (1,)),
                         candidate_ids=(("straight_hold_-1_0", "straight_hold_0_2"),
-                                       ("straight_hold_-1_1", "straight_hold_1_2")),
-                        departure_steps=dep)
+                                       ("straight_hold_-1_1", "straight_hold_1_2")))
 
 
-def test_incremental_equals_full_after_departure_shift():
+def test_incremental_equals_full_after_move():
     sc, field, lib = _setup()
     spec = _spec()
-    cache = EvaluationCache.from_full(sc, lib, field, _solution((0, 0)), spec)
-    moved = _solution((5, 5))
+    cache = EvaluationCache.from_full(sc, lib, field, _solution(), spec)
+    moved = PlanSolution(routes=((1,), (0,)),
+                         candidate_ids=(("straight_hold_-1_1", "straight_hold_1_2"),
+                                        ("straight_hold_-1_0", "straight_hold_0_2")))
     inc = cache.evaluate_after_move(moved, frozenset({0, 1}))
     full = evaluate_solution(sc, lib, moved, field, spec)
     assert inc.makespan_s == pytest.approx(full.makespan_s)
@@ -72,7 +72,7 @@ def test_incremental_equals_full_after_departure_shift():
 
 def test_incremental_counts_calls():
     sc, field, lib = _setup()
-    cache = EvaluationCache.from_full(sc, lib, field, _solution((0, 0)), _spec())
+    cache = EvaluationCache.from_full(sc, lib, field, _solution(), _spec())
     assert cache.full_calls == 1
-    cache.evaluate_after_move(_solution((3, 3)), frozenset({0}))
+    cache.evaluate_after_move(_solution(), frozenset({0}))
     assert cache.incremental_calls == 1

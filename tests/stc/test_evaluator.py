@@ -57,8 +57,7 @@ class _MockField:
 def _scenario(n_tasks=2):
     limits = ScenarioLimits(delta_t_s=0.5, v_max_mps=50.0, uav_height_m=100.0,
                             arrive_radius_m=15.0, max_wait_s=60.0,
-                            mission_deadline_s=7200.0, departure_step_s=1.0,
-                            departure_max_s=60.0, bandwidth_hz=1e6,
+                            mission_deadline_s=7200.0, bandwidth_hz=1e6,
                             uplink_power_w=0.2, eps_out=0.35, w_t=0.5, w_d=0.5)
     positions = tuple((1000.0 + i * 1000.0, 2000.0) for i in range(n_tasks))
     return STCScenario(n_uav=2, n_tasks=n_tasks, task_positions_m=positions,
@@ -77,8 +76,7 @@ def test_evaluate_solution_returns_feasible_result():
                 lib[(src, tgt)] = [generate_straight_hold(sc, field, src, tgt)]
     sol = PlanSolution(routes=((0,), (1,)),
                        candidate_ids=(("straight_hold_-1_0", "straight_hold_0_2"),
-                                      ("straight_hold_-1_1", "straight_hold_1_2")),
-                       departure_steps=(0, 0))
+                                      ("straight_hold_-1_1", "straight_hold_1_2")))
     res = evaluate_solution(sc, lib, sol, field, _spec())
     assert res.feasible is True
     assert res.makespan_s > 0.0
@@ -91,33 +89,22 @@ def _degenerate_single_slot_scenario():
     """1 UAV, 0 tasks, depot == terminal == (0,0): completes in the first slot."""
     limits = ScenarioLimits(delta_t_s=1.0, v_max_mps=10.0, uav_height_m=100.0,
                             arrive_radius_m=5.0, max_wait_s=10.0,
-                            mission_deadline_s=100.0, departure_step_s=1.0,
-                            departure_max_s=60.0, bandwidth_hz=1e6,
+                            mission_deadline_s=100.0, bandwidth_hz=1e6,
                             uplink_power_w=0.2, eps_out=0.35, w_t=0.5, w_d=0.5)
     return STCScenario(n_uav=1, n_tasks=0, task_positions_m=(), task_data_bits=(),
                        depot_m=(0.0, 0.0), terminal_m=(0.0, 0.0), limits=limits,
                        length_m=100.0, width_m=100.0, n_bs=1, task_seed=42, map_seed=0)
 
 
-def test_completion_at_first_slot_is_delta_t_not_zero():
+def test_idle_uav_completes_at_t_zero():
     sc = _degenerate_single_slot_scenario()
     field = _MockField(sc.n_sectors, eff=1.0, outage=0.0)
-    # depot->terminal candidate of exactly two coincident positions (len 2)
-    from segment.stc.types import SegmentCandidate
-    positions = np.array([[0.0, 0.0], [0.0, 0.0]])
-    cand = SegmentCandidate(
-        candidate_id="depot_term", source=-1, target=0, generator="hand",
-        positions_m=positions,
-        full_rate_bps=np.full((2, sc.n_sectors), 1e6),
-        sector_ids=np.zeros(2, dtype=int),
-        g2a_outage=np.zeros((2, sc.n_sectors)),
-        flight_steps=2, hold_position_m=(0.0, 0.0), source_data_bits=0.0)
-    lib = {(-1, 0): [cand]}
-    sol = PlanSolution(routes=((),), candidate_ids=(("depot_term",),),
-                       departure_steps=(0,))
-    res = evaluate_solution(sc, lib, sol, field, _spec())
-    assert res.makespan_s == pytest.approx(sc.limits.delta_t_s)  # 1.0, not 0.0
+    # empty route = idle UAV: no segments, no slots, complete at t=0.
+    sol = PlanSolution(routes=((),), candidate_ids=((),))
+    res = evaluate_solution(sc, {}, sol, field, _spec())
     assert res.feasible is True
+    assert res.makespan_s == 0.0
+    assert res.timelines[0].slots == ()
 
 
 def test_final_upload_slot_records_prebuffer_active_and_conflicting():
@@ -156,8 +143,7 @@ def test_keep_timelines_false_omits_slots_but_preserves_metrics():
                 lib[(src, tgt)] = [generate_straight_hold(sc, field, src, tgt)]
     sol = PlanSolution(routes=((0,), (1,)),
                        candidate_ids=(("straight_hold_-1_0", "straight_hold_0_2"),
-                                      ("straight_hold_-1_1", "straight_hold_1_2")),
-                       departure_steps=(0, 0))
+                                      ("straight_hold_-1_1", "straight_hold_1_2")))
     res_keep = evaluate_solution(sc, lib, sol, field, _spec(), keep_timelines=True)
     res_drop = evaluate_solution(sc, lib, sol, field, _spec(), keep_timelines=False)
     assert res_drop.timelines == ()
@@ -172,8 +158,7 @@ def test_deadline_with_residual_buffer_records_upload_failure():
     """Deadline expiry with un-uploaded data records an upload failure."""
     limits = ScenarioLimits(delta_t_s=1.0, v_max_mps=10.0, uav_height_m=100.0,
                             arrive_radius_m=5.0, max_wait_s=10.0,
-                            mission_deadline_s=5.0, departure_step_s=1.0,
-                            departure_max_s=60.0, bandwidth_hz=1e6,
+                            mission_deadline_s=5.0, bandwidth_hz=1e6,
                             uplink_power_w=0.2, eps_out=0.35, w_t=0.5, w_d=0.5)
     sc = STCScenario(n_uav=1, n_tasks=1, task_positions_m=((30.0, 0.0),),
                      task_data_bits=(10e6,), depot_m=(0.0, 0.0),
@@ -197,8 +182,7 @@ def test_deadline_with_residual_buffer_records_upload_failure():
         (-1, 0): [hand_cand("d_t", [(0, 0), (10, 0), (20, 0), (25, 0), (30, 0)], 0.0)],
         (0, 1): [hand_cand("t_t", [(30, 0), (40, 0), (50, 0), (55, 0), (60, 0)], 10e6)],
     }
-    sol = PlanSolution(routes=((0,),), candidate_ids=(("d_t", "t_t"),),
-                       departure_steps=(0,))
+    sol = PlanSolution(routes=((0,),), candidate_ids=(("d_t", "t_t"),))
     res = evaluate_solution(sc, lib, sol, field, _spec())
     assert res.feasible is False
     assert res.violations.upload_failures >= 1

@@ -32,8 +32,7 @@ class _MockField:
 def _scenario():
     limits = ScenarioLimits(delta_t_s=0.5, v_max_mps=50.0, uav_height_m=100.0,
                             arrive_radius_m=15.0, max_wait_s=60.0,
-                            mission_deadline_s=7200.0, departure_step_s=1.0,
-                            departure_max_s=60.0, bandwidth_hz=1e6,
+                            mission_deadline_s=7200.0, bandwidth_hz=1e6,
                             uplink_power_w=0.2, eps_out=0.35, w_t=0.5, w_d=0.5)
     return STCScenario(n_uav=2, n_tasks=2,
                        task_positions_m=((1000.0, 2000.0), (3000.0, 2000.0)),
@@ -53,14 +52,11 @@ def _setup():
     return sc, field, lib
 
 
-def test_ground_departure_delay_changes_makespan_not_outage_ratio():
+def test_outage_ratio_normalized_by_airborne_time():
     sc, field, lib = _setup()
     base = dict(routes=((0,), (1,)),
                 candidate_ids=(("straight_hold_-1_0", "straight_hold_0_2"),
                                ("straight_hold_-1_1", "straight_hold_1_2")))
-    res0 = evaluate_solution(sc, lib, PlanSolution(**base, departure_steps=(0, 0)),
-                             field, _spec())
-    res1 = evaluate_solution(sc, lib, PlanSolution(**base, departure_steps=(10, 10)),
-                             field, _spec())
-    assert res1.makespan_s > res0.makespan_s
-    assert res1.outage_ratio == res0.outage_ratio
+    res = evaluate_solution(sc, lib, PlanSolution(**base), field, _spec())
+    # constant 0.1 outage per airborne slot -> ratio exactly 0.1 per UAV
+    np.testing.assert_allclose(res.outage_ratio, [0.1, 0.1])

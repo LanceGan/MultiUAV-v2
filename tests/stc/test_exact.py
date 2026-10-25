@@ -28,8 +28,7 @@ class _MockField:
 def _scenario(n_tasks=3):
     limits = ScenarioLimits(delta_t_s=0.5, v_max_mps=50.0, uav_height_m=100.0,
                             arrive_radius_m=15.0, max_wait_s=60.0,
-                            mission_deadline_s=7200.0, departure_step_s=1.0,
-                            departure_max_s=60.0, bandwidth_hz=1e6,
+                            mission_deadline_s=7200.0, bandwidth_hz=1e6,
                             uplink_power_w=0.2, eps_out=0.35, w_t=0.5, w_d=0.5)
     return STCScenario(n_uav=1, n_tasks=n_tasks,
                        task_positions_m=tuple((1000.0 + i * 800.0, 2000.0) for i in range(n_tasks)),
@@ -48,7 +47,7 @@ def _library(sc):
     return field, lib
 
 
-def _bruteforce(sc, field, lib, departure_set=(0,)):
+def _bruteforce(sc, field, lib):
     from segment.stc.evaluator import default_objective_spec
     spec = default_objective_spec(sc, lib)
     best = None
@@ -57,7 +56,7 @@ def _bruteforce(sc, field, lib, departure_set=(0,)):
         cids = (tuple(_pick_candidate(lib, s, t) for s, t in
                       [(-1, order[0])] + [(order[i], order[i + 1]) for i in range(len(order) - 1)]
                       + [(order[-1], sc.n_tasks)]),)
-        sol = PlanSolution(routes=route, candidate_ids=cids, departure_steps=(0,))
+        sol = PlanSolution(routes=route, candidate_ids=cids)
         res = evaluate_solution(sc, lib, sol, field, spec)
         if res.feasible and (best is None or res.objective < best[0]):
             best = (res.objective, sol)
@@ -67,7 +66,7 @@ def _bruteforce(sc, field, lib, departure_set=(0,)):
 def test_exact_matches_bruteforce():
     sc = _scenario(3)
     field, lib = _library(sc)
-    res = solve_exact_tiny(sc, lib, field, departure_set=(0,))
+    res = solve_exact_tiny(sc, lib, field)
     assert res.proven_optimal is True
     bf = _bruteforce(sc, field, lib)
     np.testing.assert_approx_equal(res.objective, bf[0])
@@ -76,6 +75,6 @@ def test_exact_matches_bruteforce():
 def test_exact_finds_feasible():
     sc = _scenario(3)
     field, lib = _library(sc)
-    res = solve_exact_tiny(sc, lib, field, departure_set=(0,))
+    res = solve_exact_tiny(sc, lib, field)
     assert res.objective < float("inf")
     assert res.explored > 0

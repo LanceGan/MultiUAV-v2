@@ -53,7 +53,8 @@ def evaluate_solution(scenario, library, solution, field, objective_spec,
     dt = limits.delta_t_s
     max_slots = int(limits.mission_deadline_s / dt) + 1
 
-    # Build per-UAV edge + candidate sequences.
+    # Build per-UAV edge + candidate sequences.  An empty route is an idle
+    # (non-airborne) UAV: no segments, no outage, no bandwidth, complete at t=0.
     uav_cands = []
     uav_edges = []
     for u in range(n_uav):
@@ -63,24 +64,23 @@ def evaluate_solution(scenario, library, solution, field, objective_spec,
             edges = ([(-1, route[0])]
                      + [(route[i], route[i + 1]) for i in range(len(route) - 1)]
                      + [(route[-1], K)])
+            seq = []
+            for e, (src, tgt) in enumerate(edges):
+                cand = next(c for c in library[(src, tgt)] if c.candidate_id == cids[e])
+                seq.append(cand)
+            uav_cands.append(seq)
+            uav_edges.append(edges)
         else:
-            edges = [(-1, K)]  # empty route: depot -> terminal directly
-        seq = []
-        for e, (src, tgt) in enumerate(edges):
-            cand = next(c for c in library[(src, tgt)] if c.candidate_id == cids[e])
-            seq.append(cand)
-        uav_cands.append(seq)
-        uav_edges.append(edges)
+            uav_cands.append(())
+            uav_edges.append(())
 
-    airborne = [False] * n_uav
-    done = [False] * n_uav
+    # Simultaneous start: every non-idle UAV is airborne from global slot zero.
+    airborne = [bool(solution.routes[u]) for u in range(n_uav)]
+    done = [not bool(solution.routes[u]) for u in range(n_uav)]
     edge = [0] * n_uav
     tidx = [0] * n_uav
     buf = [0.0] * n_uav
-    # departure_steps are in departure_step_s units; convert to slot indices
-    departure_slots = [int(round(solution.departure_steps[u] * limits.departure_step_s / dt))
-                       for u in range(n_uav)]
-    completion = [None] * n_uav
+    completion = [0.0 if not solution.routes[u] else None for u in range(n_uav)]
     edge_hold = [0.0] * n_uav
     outage_time = [0.0] * n_uav
     air_time = [0.0] * n_uav
@@ -94,11 +94,6 @@ def evaluate_solution(scenario, library, solution, field, objective_spec,
     for n in range(max_slots):
         t_start = n * dt
         t_end = (n + 1) * dt
-
-        # 1. activate due UAVs
-        for u in range(n_uav):
-            if not airborne[u] and not done[u] and departure_slots[u] <= n:
-                airborne[u] = True
 
         # pre-slot buffer (buffer at the start of this slot, before upload)
         pre_buf = [buf[u] for u in range(n_uav)]
@@ -277,8 +272,7 @@ def _reference_hash(scenario, ref_trace):
     add(scenario.depot_m); add(scenario.terminal_m)
     add(tuple(scenario.task_positions_m)); add(tuple(scenario.task_data_bits))
     lim = scenario.limits
-    add((lim.delta_t_s, lim.v_max_mps, lim.arrive_radius_m, lim.bandwidth_hz,
-         lim.departure_step_s, lim.departure_max_s))
+    add((lim.delta_t_s, lim.v_max_mps, lim.arrive_radius_m, lim.bandwidth_hz))
     add(tuple(ref_trace))
     return h.hexdigest()
 
