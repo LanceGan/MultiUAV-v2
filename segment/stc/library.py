@@ -42,6 +42,13 @@ DEFAULT_GENERATOR_CONFIG = {
     "slsqp_refine": {"max_waypoints": 1, "max_refinements": 3},
 }
 
+# Default Pareto/diversity knobs for ``build_all_pairs_library``.  A nonzero
+# ``min_sector_distance`` is the shipped default: a dominated candidate is still
+# retained when its sector occupancy differs materially (L1 distance over the
+# per-sector flight-time fractions), so the ALNS layer keeps contention-avoiding
+# alternatives even when a faster candidate exists.
+DEFAULT_PAREto_KWARGS = {"max_candidates": 5, "min_sector_distance": 0.5}
+
 
 # --------------------------------------------------------------------------- #
 # Pareto / diversity pruning
@@ -195,7 +202,8 @@ def build_all_pairs_library(scenario, field, *, generator_config=None,
     """
     generator_config = (generator_config if generator_config is not None
                         else DEFAULT_GENERATOR_CONFIG)
-    pareto_kwargs = dict(pareto_kwargs or {"max_candidates": 5})
+    pareto_kwargs = dict(pareto_kwargs if pareto_kwargs is not None
+                         else DEFAULT_PAREto_KWARGS)
     pareto_kwargs.setdefault("delta_t_s", scenario.limits.delta_t_s)
     drl_candidates = drl_candidates or {}
 
