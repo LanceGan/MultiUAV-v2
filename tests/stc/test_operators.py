@@ -9,6 +9,7 @@ from segment.stc.stc_operators import (
     cheapest_insertion,
     conflict_aware_insertion,
     conflict_hotspot_removal,
+    destroy_operators,
     local_operators,
     path_switch,
     random_removal,
@@ -79,5 +80,11 @@ def test_local_moves_preserve_coverage():
     for op in (swap, path_switch):
         moved = op(sol, ctx, rng)
         assert _coverage(moved) == _coverage(sol)
-    assert set(local_operators) == {"swap", "path_switch"}
-    assert set(repair_operators) == {"cheapest_insertion", "conflict_aware_insertion"}
+    assert set(local_operators) == {
+        "relocate", "swap", "two_opt", "route_tail_exchange", "path_switch"}
+    assert set(repair_operators) == {
+        "cheapest_insertion", "regret2_insertion", "makespan_balancing_insertion",
+        "conflict_aware_insertion", "sector_diversity_insertion"}
+    assert set(destroy_operators) == {
+        "random_removal", "worst_cost_removal", "critical_route_removal",
+        "conflict_hotspot_removal", "sector_related_removal", "infeasibility_removal"}

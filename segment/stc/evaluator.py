@@ -11,9 +11,15 @@ Slot timing: slot ``n`` covers ``[n*dt, (n+1)*dt)``, so a UAV that completes in
 the first slot has completion time ``(0+1)*dt = dt`` (never zero).  Raw metrics
 (T, D, outage, violations) are computed exactly once; the normalized objective
 is scored only through :class:`ObjectiveSpec`.
+
+The single physics path is :func:`_run_slots`, consumed by both
+:func:`evaluate_solution` (full replay from slot zero) and
+:func:`simulate_from_state` (resume an already-running state from a later slot),
+so the incremental evaluator never re-implements the slot machine.
 """
 
 import hashlib
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -45,17 +51,64 @@ def _require_objective_spec(objective_spec):
             "references cannot be used for scoring")
 
 
-def evaluate_solution(scenario, library, solution, field, objective_spec,
-                      keep_timelines=True):
-    _require_objective_spec(objective_spec)
-    limits = scenario.limits
+@dataclass
+class SimulationState:
+    """Mutable slot-machine state; the single authoritative physics path.
+
+    ``start_slot`` is the first slot index this state has not yet processed
+    (0 for a fresh replay, later for an incremental resume).  ``snapshot()``
+    returns an independent copy whose ``slots_by_uav`` lists share the frozen
+    ``TimelineSlot`` records but are otherwise free to append to.
+    """
+    airborne: list
+    done: list
+    edge: list
+    tidx: list
+    buf: list
+    completion: list
+    edge_hold: list
+    outage_time: list
+    air_time: list
+    upload_time: list
+    slots_by_uav: list
+    unserved: int
+    deadline_exceeded: int
+    wait_exceeded: int
+    start_slot: int
+
+    def snapshot(self):
+        return SimulationState(
+            airborne=list(self.airborne), done=list(self.done),
+            edge=list(self.edge), tidx=list(self.tidx), buf=list(self.buf),
+            completion=list(self.completion), edge_hold=list(self.edge_hold),
+            outage_time=list(self.outage_time), air_time=list(self.air_time),
+            upload_time=list(self.upload_time),
+            slots_by_uav=[list(s) for s in self.slots_by_uav],
+            unserved=self.unserved, deadline_exceeded=self.deadline_exceeded,
+            wait_exceeded=self.wait_exceeded, start_slot=self.start_slot)
+
+    def light_snapshot(self, start_slot=None):
+        """Cheap snapshot without the recorded ``slots_by_uav`` (resume seed).
+
+        The recorded timeline prefix is reconstructed separately from the base
+        result, so it is intentionally omitted here to keep per-slot memory
+        bounded to O(U).
+        """
+        return SimulationState(
+            airborne=list(self.airborne), done=list(self.done),
+            edge=list(self.edge), tidx=list(self.tidx), buf=list(self.buf),
+            completion=list(self.completion), edge_hold=list(self.edge_hold),
+            outage_time=list(self.outage_time), air_time=list(self.air_time),
+            upload_time=list(self.upload_time), slots_by_uav=[],
+            unserved=self.unserved, deadline_exceeded=self.deadline_exceeded,
+            wait_exceeded=self.wait_exceeded,
+            start_slot=self.start_slot if start_slot is None else start_slot)
+
+
+def _build_cand_seqs(scenario, library, solution):
+    """Per-UAV edge + candidate sequences (an empty route is an idle UAV)."""
     n_uav = scenario.n_uav
     K = scenario.n_tasks
-    dt = limits.delta_t_s
-    max_slots = int(limits.mission_deadline_s / dt) + 1
-
-    # Build per-UAV edge + candidate sequences.  An empty route is an idle
-    # (non-airborne) UAV: no segments, no outage, no bandwidth, complete at t=0.
     uav_cands = []
     uav_edges = []
     for u in range(n_uav):
@@ -74,64 +127,81 @@ def evaluate_solution(scenario, library, solution, field, objective_spec,
         else:
             uav_cands.append(())
             uav_edges.append(())
+    return uav_cands, uav_edges
 
-    # Simultaneous start: every non-idle UAV is airborne from global slot zero.
+
+def _init_state(scenario, solution):
+    n_uav = scenario.n_uav
     airborne = [bool(solution.routes[u]) for u in range(n_uav)]
     done = [not bool(solution.routes[u]) for u in range(n_uav)]
-    edge = [0] * n_uav
-    tidx = [0] * n_uav
-    buf = [0.0] * n_uav
     completion = [0.0 if not solution.routes[u] else None for u in range(n_uav)]
-    edge_hold = [0.0] * n_uav
-    outage_time = [0.0] * n_uav
-    air_time = [0.0] * n_uav
-    upload_time = [0.0] * n_uav
-    slots_by_uav = [[] for _ in range(n_uav)]
+    return SimulationState(
+        airborne=airborne, done=done,
+        edge=[0] * n_uav, tidx=[0] * n_uav, buf=[0.0] * n_uav,
+        completion=completion, edge_hold=[0.0] * n_uav,
+        outage_time=[0.0] * n_uav, air_time=[0.0] * n_uav,
+        upload_time=[0.0] * n_uav, slots_by_uav=[[] for _ in range(n_uav)],
+        unserved=scenario.n_tasks, deadline_exceeded=0, wait_exceeded=0,
+        start_slot=0)
 
-    unserved = K
-    deadline_exceeded = 0
-    wait_exceeded = 0
 
-    for n in range(max_slots):
+def _run_slots(scenario, library, solution, field, state, keep_timelines,
+               capture=None):
+    """Advance the authoritative slot machine from ``state.start_slot`` to the end.
+
+    ``capture``, when given, is called as ``capture(n, state)`` at the start of
+    each processed slot (before any state mutation), so an incremental caller
+    can seed later resume points.
+    """
+    uav_cands, uav_edges = _build_cand_seqs(scenario, library, solution)
+    limits = scenario.limits
+    n_uav = scenario.n_uav
+    K = scenario.n_tasks
+    dt = limits.delta_t_s
+    max_slots = int(limits.mission_deadline_s / dt) + 1
+
+    for n in range(state.start_slot, max_slots):
+        if capture is not None:
+            capture(n, state)
         t_start = n * dt
         t_end = (n + 1) * dt
 
         # pre-slot buffer (buffer at the start of this slot, before upload)
-        pre_buf = [buf[u] for u in range(n_uav)]
+        pre_buf = [state.buf[u] for u in range(n_uav)]
 
         # 2. advance / hold
         holding = [False] * n_uav
         for u in range(n_uav):
-            if airborne[u] and not done[u]:
-                cand = uav_cands[u][edge[u]]
+            if state.airborne[u] and not state.done[u]:
+                cand = uav_cands[u][state.edge[u]]
                 L = len(cand.positions_m)
-                if tidx[u] < L - 2:
-                    tidx[u] += 1
-                elif tidx[u] == L - 2:
+                if state.tidx[u] < L - 2:
+                    state.tidx[u] += 1
+                elif state.tidx[u] == L - 2:
                     if pre_buf[u] <= 0.0:
-                        tidx[u] += 1          # enter the service anchor
+                        state.tidx[u] += 1          # enter the service anchor
                     else:
-                        holding[u] = True     # wait outside the arrival radius
-                        edge_hold[u] += dt
-                        if edge_hold[u] > limits.max_wait_s + 1e-9:
-                            wait_exceeded += 1
+                        holding[u] = True           # wait outside the arrival radius
+                        state.edge_hold[u] += dt
+                        if state.edge_hold[u] > limits.max_wait_s + 1e-9:
+                            state.wait_exceeded += 1
 
         # 3. associate sectors + accrue outage over the full airborne time
         sectors = [None] * n_uav
         slot_outage = [0.0] * n_uav
         for u in range(n_uav):
-            if airborne[u] and not done[u]:
-                cand = uav_cands[u][edge[u]]
-                p = cand.positions_m[tidx[u]]
+            if state.airborne[u] and not state.done[u]:
+                cand = uav_cands[u][state.edge[u]]
+                p = cand.positions_m[state.tidx[u]]
                 s = field.sample(p)
                 sec = select_serving_sector(s, pre_buf[u] > 0.0, limits.eps_out)
                 sectors[u] = sec
                 slot_outage[u] = float(s.g2a_outage[sec])
-                outage_time[u] += slot_outage[u] * dt
-                air_time[u] += dt
+                state.outage_time[u] += slot_outage[u] * dt
+                state.air_time[u] += dt
 
         # 4. active uploaders (pre-slot buffer) + bandwidth split
-        active = [airborne[u] and not done[u] and pre_buf[u] > 0.0
+        active = [state.airborne[u] and not state.done[u] and pre_buf[u] > 0.0
                   for u in range(n_uav)]
         co = {}
         for u in range(n_uav):
@@ -144,40 +214,40 @@ def evaluate_solution(scenario, library, solution, field, objective_spec,
         uploaded = [0.0] * n_uav
         post_buf = list(pre_buf)
         for u in range(n_uav):
-            if airborne[u] and not done[u]:
-                cand = uav_cands[u][edge[u]]
+            if state.airborne[u] and not state.done[u]:
+                cand = uav_cands[u][state.edge[u]]
                 sec = sectors[u]
-                rate_full[u] = float(cand.full_rate_bps[tidx[u]][sec])
+                rate_full[u] = float(cand.full_rate_bps[state.tidx[u]][sec])
                 if active[u]:
                     alloc[u] = limits.bandwidth_hz / co[sec]
                     rate = rate_full[u] * (alloc[u] / limits.bandwidth_hz)
                     up = min(pre_buf[u], rate * dt)
                     uploaded[u] = up
-                    buf[u] = pre_buf[u] - up
-                    upload_time[u] += dt
+                    state.buf[u] = pre_buf[u] - up
+                    state.upload_time[u] += dt
                 else:
-                    buf[u] = pre_buf[u]  # == 0 (buffers never go negative)
-                post_buf[u] = buf[u]
+                    state.buf[u] = pre_buf[u]  # == 0 (buffers never go negative)
+                post_buf[u] = state.buf[u]
 
         # service event (after upload/motion); applied below
         service_event = [""] * n_uav
         for u in range(n_uav):
-            if airborne[u] and not done[u]:
-                cand = uav_cands[u][edge[u]]
-                if tidx[u] == len(cand.positions_m) - 1 and post_buf[u] <= 0.0:
-                    _, tgt = uav_edges[u][edge[u]]
+            if state.airborne[u] and not state.done[u]:
+                cand = uav_cands[u][state.edge[u]]
+                if state.tidx[u] == len(cand.positions_m) - 1 and post_buf[u] <= 0.0:
+                    _, tgt = uav_edges[u][state.edge[u]]
                     service_event[u] = "complete" if tgt == K else "serve"
 
         # record typed TimelineSlot
         if keep_timelines:
             for u in range(n_uav):
-                if airborne[u] and not done[u]:
-                    cand = uav_cands[u][edge[u]]
-                    p = cand.positions_m[tidx[u]]
-                    slots_by_uav[u].append(TimelineSlot(
+                if state.airborne[u] and not state.done[u]:
+                    cand = uav_cands[u][state.edge[u]]
+                    p = cand.positions_m[state.tidx[u]]
+                    state.slots_by_uav[u].append(TimelineSlot(
                         time_start_s=t_start,
                         time_end_s=t_end,
-                        edge_id=edge[u],
+                        edge_id=state.edge[u],
                         candidate_id=cand.candidate_id,
                         source=cand.source,
                         target=cand.target,
@@ -197,43 +267,51 @@ def evaluate_solution(scenario, library, solution, field, objective_spec,
 
         # 6. apply service events (buffer load / edge advance / terminal done)
         for u in range(n_uav):
-            if airborne[u] and not done[u] and service_event[u]:
-                _, tgt = uav_edges[u][edge[u]]
-                edge_hold[u] = 0.0
+            if state.airborne[u] and not state.done[u] and service_event[u]:
+                _, tgt = uav_edges[u][state.edge[u]]
+                state.edge_hold[u] = 0.0
                 if tgt == K:
-                    done[u] = True
-                    completion[u] = t_end
+                    state.done[u] = True
+                    state.completion[u] = t_end
                 else:
-                    unserved -= 1
-                    buf[u] = float(scenario.task_data_bits[tgt])
-                    edge[u] += 1
-                    tidx[u] = 0
+                    state.unserved -= 1
+                    state.buf[u] = float(scenario.task_data_bits[tgt])
+                    state.edge[u] += 1
+                    state.tidx[u] = 0
+
+
+def _build_result(scenario, library, solution, field, objective_spec, state,
+                  keep_timelines):
+    limits = scenario.limits
+    n_uav = scenario.n_uav
 
     # post-loop failure accounting (deadline with residual buffer)
     upload_failures = 0
     for u in range(n_uav):
-        if airborne[u] and not done[u]:
-            deadline_exceeded += 1
-            if buf[u] > 0.0:
+        if state.airborne[u] and not state.done[u]:
+            state.deadline_exceeded += 1
+            if state.buf[u] > 0.0:
                 upload_failures += 1
 
-    outage_ratio = tuple(ot / max(at, 1e-9) for ot, at in zip(outage_time, air_time))
-    feasible = (unserved == 0 and upload_failures == 0 and deadline_exceeded == 0
-                and wait_exceeded == 0
-                and all(c is not None for c in completion)
+    outage_ratio = tuple(ot / max(at, 1e-9)
+                         for ot, at in zip(state.outage_time, state.air_time))
+    feasible = (state.unserved == 0 and upload_failures == 0
+                and state.deadline_exceeded == 0
+                and state.wait_exceeded == 0
+                and all(c is not None for c in state.completion)
                 and all(r <= limits.eps_out for r in outage_ratio))
-    makespan = max((c for c in completion if c is not None), default=0.0)
-    total_delay = sum(upload_time)
+    makespan = max((c for c in state.completion if c is not None), default=0.0)
+    total_delay = sum(state.upload_time)
     violations = ViolationVector(
-        unserved_tasks=unserved,
+        unserved_tasks=state.unserved,
         upload_failures=upload_failures,
         outage_excess=max(0.0, max(outage_ratio) - limits.eps_out) if outage_ratio else 0.0,
-        deadline_exceeded=deadline_exceeded,
-        wait_exceeded=wait_exceeded,
+        deadline_exceeded=state.deadline_exceeded,
+        wait_exceeded=state.wait_exceeded,
     )
 
     if keep_timelines:
-        timelines = tuple(UAVTimeline(uav_id=u, slots=tuple(slots_by_uav[u]))
+        timelines = tuple(UAVTimeline(uav_id=u, slots=tuple(state.slots_by_uav[u]))
                           for u in range(n_uav))
     else:
         timelines = ()
@@ -243,7 +321,7 @@ def evaluate_solution(scenario, library, solution, field, objective_spec,
     # Task-balance reporting (spec §1.5): secondary, never folded into the
     # objective.  A UAV that never completes before the deadline records NaN.
     completion_times = tuple(
-        (float(completion[u]) if completion[u] is not None else float("nan"))
+        (float(state.completion[u]) if state.completion[u] is not None else float("nan"))
         for u in range(n_uav))
     comp_arr = np.asarray(completion_times, dtype=float)
     if np.all(np.isnan(comp_arr)):
@@ -262,6 +340,50 @@ def evaluate_solution(scenario, library, solution, field, objective_spec,
         outage_ratio=outage_ratio, violations=violations, timelines=timelines,
         objective=objective, balance=balance,
     )
+
+
+def evaluate_solution(scenario, library, solution, field, objective_spec,
+                      keep_timelines=True):
+    """Authoritative full replay from slot zero."""
+    _require_objective_spec(objective_spec)
+    state = _init_state(scenario, solution)
+    _run_slots(scenario, library, solution, field, state, keep_timelines)
+    return _build_result(scenario, library, solution, field, objective_spec,
+                         state, keep_timelines)
+
+
+def simulate_from_state(scenario, library, solution, field, objective_spec,
+                        state, keep_timelines=True, capture=None):
+    """Resume the authoritative slot machine from ``state.start_slot`` onward.
+
+    The physics is identical to :func:`evaluate_solution`; only the starting
+    slot differs, so an incremental caller can skip the provably-unchanged
+    prefix of the timeline.
+    """
+    _require_objective_spec(objective_spec)
+    _run_slots(scenario, library, solution, field, state, keep_timelines, capture)
+    return _build_result(scenario, library, solution, field, objective_spec,
+                         state, keep_timelines)
+
+
+def evaluate_with_snapshots(scenario, library, solution, field, objective_spec,
+                            keep_timelines=True):
+    """Full replay that also returns lightweight per-slot state snapshots.
+
+    The snapshots map a slot index to a :class:`SimulationState` (without
+    ``slots_by_uav``), letting the incremental evaluator resume from any slot.
+    """
+    _require_objective_spec(objective_spec)
+    state = _init_state(scenario, solution)
+    snapshots = {}
+
+    def capture(n, st):
+        snapshots[n] = st.light_snapshot(n)
+
+    _run_slots(scenario, library, solution, field, state, keep_timelines, capture)
+    result = _build_result(scenario, library, solution, field, objective_spec,
+                           state, keep_timelines)
+    return result, snapshots
 
 
 def objective(result, objective_spec):
