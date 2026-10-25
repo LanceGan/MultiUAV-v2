@@ -40,6 +40,22 @@ def test_rejects_incomplete_replicate_pairing():
         hierarchical_paired_summary(recs, "A", "B")
 
 
+def test_rejects_scenario_present_for_one_method_only():
+    # scenario 1 has method A but no method B: must not silently narrow the
+    # paired set to scenario 0.
+    recs = [_rec(0, "A", 0, 1.0), _rec(1, "A", 0, 1.0),
+            _rec(0, "B", 0, 2.0)]
+    with pytest.raises(ValueError):
+        hierarchical_paired_summary(recs, "A", "B")
+
+
+def test_rejects_scenario_missing_for_method_a():
+    recs = [_rec(0, "A", 0, 1.0),
+            _rec(0, "B", 0, 2.0), _rec(1, "B", 0, 2.0)]
+    with pytest.raises(ValueError):
+        hierarchical_paired_summary(recs, "A", "B")
+
+
 def test_rejects_nan_metric():
     recs = [_rec(0, "A", 0, np.nan), _rec(0, "B", 0, 2.0)]
     with pytest.raises(ValueError):

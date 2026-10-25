@@ -129,6 +129,20 @@ def hierarchical_paired_summary(records, method_a, method_b, metric="metric",
         keyed.append((scen, m, rep, feasible, val))
         scen_reps.setdefault(scen, {}).setdefault(m, set()).add(rep)
 
+    # scenario-coverage completeness: a scenario present for only one method is a
+    # silent data-loss bug (e.g. an orchestrator failing to emit one method's
+    # records for that scenario).  Reject it rather than narrowing the paired set.
+    scenarios_a = {scen for scen, by_method in scen_reps.items() if method_a in by_method}
+    scenarios_b = {scen for scen, by_method in scen_reps.items() if method_b in by_method}
+    only_a = scenarios_a - scenarios_b
+    only_b = scenarios_b - scenarios_a
+    if only_a or only_b:
+        raise ValueError(
+            "incomplete scenario coverage: scenarios %r present for %s but not %s; "
+            "scenarios %r present for %s but not %s"
+            % (sorted(only_a), method_a, method_b,
+               sorted(only_b), method_b, method_a))
+
     # complete replicate pairing (paired cost policies)
     if failure_policy in ("common_feasible", "penalized"):
         for scen, by_method in scen_reps.items():
