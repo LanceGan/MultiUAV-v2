@@ -5,11 +5,19 @@ import numpy as np
 from segment.stc.evaluator import evaluate_solution
 from segment.stc.generators import generate_straight_hold
 from segment.stc.types import (
+    ObjectiveSpec,
     PlanSolution,
     RadioSample,
+    ReferenceValues,
     STCScenario,
     ScenarioLimits,
 )
+
+
+def _spec():
+    return ObjectiveSpec(
+        reference=ReferenceValues(t_ref_s=1.0, d_ref_s=1.0, source_hash="hand"),
+        w_t=0.5, w_d=0.5)
 
 
 class _MockField:
@@ -50,7 +58,9 @@ def test_ground_departure_delay_changes_makespan_not_outage_ratio():
     base = dict(routes=((0,), (1,)),
                 candidate_ids=(("straight_hold_-1_0", "straight_hold_0_2"),
                                ("straight_hold_-1_1", "straight_hold_1_2")))
-    res0 = evaluate_solution(sc, lib, PlanSolution(**base, departure_steps=(0, 0)), field)
-    res1 = evaluate_solution(sc, lib, PlanSolution(**base, departure_steps=(10, 10)), field)
+    res0 = evaluate_solution(sc, lib, PlanSolution(**base, departure_steps=(0, 0)),
+                             field, _spec())
+    res1 = evaluate_solution(sc, lib, PlanSolution(**base, departure_steps=(10, 10)),
+                             field, _spec())
     assert res1.makespan_s > res0.makespan_s
     assert res1.outage_ratio == res0.outage_ratio

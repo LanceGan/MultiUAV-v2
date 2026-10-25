@@ -8,7 +8,12 @@ from segment.stc.evaluator import evaluate_solution
 from segment.stc.exact import solve_exact_tiny
 from segment.stc.generators import generate_straight_hold
 from segment.stc.operators import _pick_candidate
-from segment.stc.types import PlanSolution, RadioSample, STCScenario, ScenarioLimits
+from segment.stc.types import (
+    PlanSolution,
+    RadioSample,
+    STCScenario,
+    ScenarioLimits,
+)
 
 
 class _MockField:
@@ -44,6 +49,8 @@ def _library(sc):
 
 
 def _bruteforce(sc, field, lib, departure_set=(0,)):
+    from segment.stc.evaluator import default_objective_spec
+    spec = default_objective_spec(sc, lib)
     best = None
     for order in itertools.permutations(range(sc.n_tasks)):
         route = (tuple(order),)
@@ -51,7 +58,7 @@ def _bruteforce(sc, field, lib, departure_set=(0,)):
                       [(-1, order[0])] + [(order[i], order[i + 1]) for i in range(len(order) - 1)]
                       + [(order[-1], sc.n_tasks)]),)
         sol = PlanSolution(routes=route, candidate_ids=cids, departure_steps=(0,))
-        res = evaluate_solution(sc, lib, sol, field)
+        res = evaluate_solution(sc, lib, sol, field, spec)
         if res.feasible and (best is None or res.objective < best[0]):
             best = (res.objective, sol)
     return best

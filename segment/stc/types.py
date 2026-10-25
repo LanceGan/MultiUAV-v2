@@ -35,6 +35,48 @@ class ScenarioLimits:
 
 
 @dataclass(frozen=True)
+class ReferenceValues:
+    """Frozen normalization reference (spec §5.7).
+
+    ``t_ref_s`` and ``d_ref_s`` are positive SI seconds.  ``source_hash`` binds
+    the reference to the pre-registered baseline that produced it so an
+    experiment family can verify it never changes.
+    """
+    t_ref_s: float
+    d_ref_s: float
+    source_hash: str
+
+    def __post_init__(self):
+        for name in ("t_ref_s", "d_ref_s"):
+            val = getattr(self, name)
+            if not np.isfinite(val) or val <= 0.0:
+                raise ValueError(
+                    "reference %s must be positive finite, got %r" % (name, val))
+        if not self.source_hash:
+            raise ValueError("source_hash must be a non-empty string")
+
+
+@dataclass(frozen=True)
+class ObjectiveSpec:
+    """Single authoritative scoring path ``w_t*T/T_ref + w_d*D/D_ref`` (spec §5.7)."""
+    reference: ReferenceValues
+    w_t: float
+    w_d: float
+
+    def __post_init__(self):
+        for name in ("w_t", "w_d"):
+            val = getattr(self, name)
+            if not np.isfinite(val) or val <= 0.0:
+                raise ValueError(
+                    "weight %s must be positive finite, got %r" % (name, val))
+
+    def score(self, makespan_s, total_delay_s):
+        """Normalized objective.  The only place the objective formula lives."""
+        return (self.w_t * makespan_s / self.reference.t_ref_s
+                + self.w_d * total_delay_s / self.reference.d_ref_s)
+
+
+@dataclass(frozen=True)
 class RadioSample:
     """Per-sector A2G spectral efficiency and G2A outage at one position."""
     a2g_efficiency: np.ndarray   # (n_sectors,) bit/s/Hz
@@ -84,20 +126,42 @@ class PlanSolution:
 
 
 @dataclass(frozen=True)
+class TimelineSlot:
+    """One synchronous evaluator slot for one UAV.
+
+    All quantities are SI.  ``edge_id`` is the route-edge index for this UAV
+    (``uav_id`` lives on the enclosing :class:`UAVTimeline`), so a later task can
+    key hotspots by ``(uav_id, route_edge_index, source, target, candidate_id)``.
+
+    ``pre_buffer_bits`` is the buffer at the *start* of the slot (before this
+    slot's upload); ``active_uploader`` is exactly ``pre_buffer_bits > 0``, so a
+    buffer that drains to zero mid-slot still consumed bandwidth and caused
+    conflict.  ``rate_bps`` is the exclusive (full-bandwidth) rate at the serving
+    sector; ``uploaded_bits`` is the actual upload
+    ``min(pre_buffer_bits, rate_bps * allocated_bandwidth_hz/B * dt)``.
+    """
+    time_start_s: float
+    time_end_s: float
+    edge_id: int
+    candidate_id: str
+    position_m: tuple
+    airborne: bool
+    pre_buffer_bits: float
+    post_buffer_bits: float
+    active_uploader: bool
+    serving_sector: int
+    allocated_bandwidth_hz: float
+    rate_bps: float
+    uploaded_bits: float
+    g2a_outage: float
+    holding: bool
+    service_event: str
+
+
+@dataclass(frozen=True)
 class UAVTimeline:
     uav_id: int
-    times_s: tuple
-    positions_m: tuple
-    edge_ids: tuple
-    candidate_ids: tuple
-    airborne: tuple
-    buffers_bits: tuple
-    serving_sectors: tuple
-    allocated_bandwidth_hz: tuple
-    rates_bps: tuple
-    uploaded_bits: tuple
-    g2a_outage: tuple
-    holding: tuple
+    slots: tuple   # tuple[TimelineSlot, ...]
 
 
 @dataclass(frozen=True)

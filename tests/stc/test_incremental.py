@@ -7,11 +7,19 @@ from segment.stc.evaluator import evaluate_solution
 from segment.stc.generators import generate_straight_hold
 from segment.stc.incremental import EvaluationCache
 from segment.stc.types import (
+    ObjectiveSpec,
     PlanSolution,
     RadioSample,
+    ReferenceValues,
     STCScenario,
     ScenarioLimits,
 )
+
+
+def _spec():
+    return ObjectiveSpec(
+        reference=ReferenceValues(t_ref_s=1.0, d_ref_s=1.0, source_hash="hand"),
+        w_t=0.5, w_d=0.5)
 
 
 class _MockField:
@@ -52,10 +60,11 @@ def _solution(dep=(0, 0)):
 
 def test_incremental_equals_full_after_departure_shift():
     sc, field, lib = _setup()
-    cache = EvaluationCache.from_full(sc, lib, field, _solution((0, 0)))
+    spec = _spec()
+    cache = EvaluationCache.from_full(sc, lib, field, _solution((0, 0)), spec)
     moved = _solution((5, 5))
     inc = cache.evaluate_after_move(moved, frozenset({0, 1}))
-    full = evaluate_solution(sc, lib, moved, field)
+    full = evaluate_solution(sc, lib, moved, field, spec)
     assert inc.makespan_s == pytest.approx(full.makespan_s)
     assert inc.total_delay_s == pytest.approx(full.total_delay_s)
     assert inc.feasible == full.feasible
@@ -63,7 +72,7 @@ def test_incremental_equals_full_after_departure_shift():
 
 def test_incremental_counts_calls():
     sc, field, lib = _setup()
-    cache = EvaluationCache.from_full(sc, lib, field, _solution((0, 0)))
+    cache = EvaluationCache.from_full(sc, lib, field, _solution((0, 0)), _spec())
     assert cache.full_calls == 1
     cache.evaluate_after_move(_solution((3, 3)), frozenset({0}))
     assert cache.incremental_calls == 1

@@ -12,7 +12,7 @@ import itertools
 import time
 from dataclasses import dataclass
 
-from segment.stc.evaluator import evaluate_solution
+from segment.stc.evaluator import default_objective_spec, evaluate_solution
 from segment.stc.types import PlanSolution
 
 
@@ -57,6 +57,7 @@ def solve_exact_tiny(scenario, library, field, departure_set=(0,), max_tasks=8,
     best_res = None
     explored = 0
     timed_out = False
+    spec = default_objective_spec(scenario, library)
 
     for assign in itertools.product(range(U), repeat=K):
         routes = [[] for _ in range(U)]
@@ -70,7 +71,7 @@ def solve_exact_tiny(scenario, library, field, departure_set=(0,), max_tasks=8,
                     timed_out = True
                     break
                 for sol in _plan_variants(ordered, scenario, library, dep):
-                    res = evaluate_solution(scenario, library, sol, field)
+                    res = evaluate_solution(scenario, library, sol, field, spec)
                     explored += 1
                     if res.feasible and (best_res is None or res.objective < best_res.objective):
                         best_sol, best_res = sol, res

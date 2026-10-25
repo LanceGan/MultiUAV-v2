@@ -1,15 +1,30 @@
-"""Slot-synchronous shared-bandwidth state machine (Task 6).
+"""Slot-synchronous shared-bandwidth state machine (authoritative evaluator).
 
-The authoritative evaluator: every formal metric comes from here.  Per slot it
-activates due UAVs, advances each along its selected candidate trace, holds at
-the arrival boundary until the buffer drains, associates one serving sector per
-airborne UAV, splits each sector's bandwidth among *active uploaders* (non-empty
-buffers only), updates caches, and triggers service events at the anchors.
+Every formal metric comes from here.  Per slot it activates due UAVs, advances
+each along its selected candidate trace, holds at the arrival boundary until the
+buffer drains, associates one serving sector per airborne UAV, splits each
+sector's bandwidth among *active uploaders* (pre-slot non-empty buffers only),
+updates buffers, applies service events after upload/motion, and records a typed
+:class:`TimelineSlot` per UAV.
+
+Slot timing: slot ``n`` covers ``[n*dt, (n+1)*dt)``, so a UAV that completes in
+the first slot has completion time ``(0+1)*dt = dt`` (never zero).  Raw metrics
+(T, D, outage, violations) are computed exactly once; the normalized objective
+is scored only through :class:`ObjectiveSpec`.
 """
+
+import hashlib
 
 import numpy as np
 
-from segment.stc.types import EvaluationResult, UAVTimeline, ViolationVector
+from segment.stc.types import (
+    EvaluationResult,
+    ObjectiveSpec,
+    ReferenceValues,
+    TimelineSlot,
+    UAVTimeline,
+    ViolationVector,
+)
 
 
 def select_serving_sector(sample, has_payload, reliability_limit):
@@ -22,8 +37,16 @@ def select_serving_sector(sample, has_payload, reliability_limit):
     return int(np.argmin(sample.g2a_outage))
 
 
-def evaluate_solution(scenario, library, solution, field, keep_timelines=True,
-                      t_ref=None, d_ref=None):
+def _require_objective_spec(objective_spec):
+    if not isinstance(objective_spec, ObjectiveSpec):
+        raise ValueError(
+            "evaluate_solution requires an ObjectiveSpec; missing/nonpositive "
+            "references cannot be used for scoring")
+
+
+def evaluate_solution(scenario, library, solution, field, objective_spec,
+                      keep_timelines=True):
+    _require_objective_spec(objective_spec)
     limits = scenario.limits
     n_uav = scenario.n_uav
     K = scenario.n_tasks
@@ -58,118 +81,166 @@ def evaluate_solution(scenario, library, solution, field, keep_timelines=True,
     departure_slots = [int(round(solution.departure_steps[u] * limits.departure_step_s / dt))
                        for u in range(n_uav)]
     completion = [None] * n_uav
-    hold_time = [0.0] * n_uav
     edge_hold = [0.0] * n_uav
     outage_time = [0.0] * n_uav
     air_time = [0.0] * n_uav
     upload_time = [0.0] * n_uav
-    timelines = [[] for _ in range(n_uav)]
+    slots_by_uav = [[] for _ in range(n_uav)]
 
     unserved = K
     deadline_exceeded = 0
     wait_exceeded = 0
 
     for n in range(max_slots):
-        # 1. activate
+        t_start = n * dt
+        t_end = (n + 1) * dt
+
+        # 1. activate due UAVs
         for u in range(n_uav):
             if not airborne[u] and not done[u] and departure_slots[u] <= n:
                 airborne[u] = True
 
+        # pre-slot buffer (buffer at the start of this slot, before upload)
+        pre_buf = [buf[u] for u in range(n_uav)]
+
         # 2. advance / hold
+        holding = [False] * n_uav
         for u in range(n_uav):
             if airborne[u] and not done[u]:
-                pos = uav_cands[u][edge[u]].positions_m
-                if tidx[u] < len(pos) - 2:
+                cand = uav_cands[u][edge[u]]
+                L = len(cand.positions_m)
+                if tidx[u] < L - 2:
                     tidx[u] += 1
-                elif tidx[u] == len(pos) - 2:
-                    if buf[u] <= 0.0:
-                        tidx[u] += 1
+                elif tidx[u] == L - 2:
+                    if pre_buf[u] <= 0.0:
+                        tidx[u] += 1          # enter the service anchor
                     else:
-                        hold_time[u] += dt
+                        holding[u] = True     # wait outside the arrival radius
                         edge_hold[u] += dt
                         if edge_hold[u] > limits.max_wait_s + 1e-9:
                             wait_exceeded += 1
 
-        # 3. associate sectors + outage
+        # 3. associate sectors + accrue outage over the full airborne time
         sectors = [None] * n_uav
+        slot_outage = [0.0] * n_uav
         for u in range(n_uav):
             if airborne[u] and not done[u]:
                 cand = uav_cands[u][edge[u]]
                 p = cand.positions_m[tidx[u]]
                 s = field.sample(p)
-                sec = select_serving_sector(s, buf[u] > 0.0, limits.eps_out)
+                sec = select_serving_sector(s, pre_buf[u] > 0.0, limits.eps_out)
                 sectors[u] = sec
-                outage_time[u] += s.g2a_outage[sec] * dt
+                slot_outage[u] = float(s.g2a_outage[sec])
+                outage_time[u] += slot_outage[u] * dt
                 air_time[u] += dt
 
-        # 4. active uploaders + bandwidth split
-        active = [airborne[u] and not done[u] and buf[u] > 0.0 for u in range(n_uav)]
+        # 4. active uploaders (pre-slot buffer) + bandwidth split
+        active = [airborne[u] and not done[u] and pre_buf[u] > 0.0
+                  for u in range(n_uav)]
         co = {}
         for u in range(n_uav):
             if active[u]:
                 co[sectors[u]] = co.get(sectors[u], 0) + 1
 
-        # 5. update cache
-        for u in range(n_uav):
-            if active[u]:
-                cand = uav_cands[u][edge[u]]
-                rate = cand.full_rate_bps[tidx[u]][sectors[u]] / co[sectors[u]]
-                buf[u] = max(0.0, buf[u] - rate * dt)
-                upload_time[u] += dt
-
-        # record per-slot state for conflict attribution: (time, sector, buffer, alloc, full_rate)
+        # 5. upload + update buffer
+        alloc = [0.0] * n_uav
+        rate_full = [0.0] * n_uav
+        uploaded = [0.0] * n_uav
+        post_buf = list(pre_buf)
         for u in range(n_uav):
             if airborne[u] and not done[u]:
                 cand = uav_cands[u][edge[u]]
-                fr = cand.full_rate_bps[tidx[u]]
                 sec = sectors[u]
-                alloc = limits.bandwidth_hz / co.get(sec, 1) if active[u] else 0.0
-                timelines[u].append((n * dt, sec, buf[u], alloc, float(fr[sec])))
+                rate_full[u] = float(cand.full_rate_bps[tidx[u]][sec])
+                if active[u]:
+                    alloc[u] = limits.bandwidth_hz / co[sec]
+                    rate = rate_full[u] * (alloc[u] / limits.bandwidth_hz)
+                    up = min(pre_buf[u], rate * dt)
+                    uploaded[u] = up
+                    buf[u] = pre_buf[u] - up
+                    upload_time[u] += dt
+                else:
+                    buf[u] = pre_buf[u]  # == 0 (buffers never go negative)
+                post_buf[u] = buf[u]
 
-        # 6. service events
+        # service event (after upload/motion); applied below
+        service_event = [""] * n_uav
         for u in range(n_uav):
             if airborne[u] and not done[u]:
                 cand = uav_cands[u][edge[u]]
-                if tidx[u] == len(cand.positions_m) - 1 and buf[u] <= 0.0:
+                if tidx[u] == len(cand.positions_m) - 1 and post_buf[u] <= 0.0:
                     _, tgt = uav_edges[u][edge[u]]
-                    edge_hold[u] = 0.0
-                    if tgt == K:
-                        done[u] = True
-                        completion[u] = n * dt
-                    else:
-                        unserved -= 1
-                        buf[u] = scenario.task_data_bits[tgt]
-                        edge[u] += 1
-                        tidx[u] = 0
+                    service_event[u] = "complete" if tgt == K else "serve"
 
+        # record typed TimelineSlot
+        if keep_timelines:
+            for u in range(n_uav):
+                if airborne[u] and not done[u]:
+                    cand = uav_cands[u][edge[u]]
+                    p = cand.positions_m[tidx[u]]
+                    slots_by_uav[u].append(TimelineSlot(
+                        time_start_s=t_start,
+                        time_end_s=t_end,
+                        edge_id=edge[u],
+                        candidate_id=cand.candidate_id,
+                        position_m=(float(p[0]), float(p[1])),
+                        airborne=True,
+                        pre_buffer_bits=pre_buf[u],
+                        post_buffer_bits=post_buf[u],
+                        active_uploader=active[u],
+                        serving_sector=sectors[u],
+                        allocated_bandwidth_hz=alloc[u],
+                        rate_bps=rate_full[u],
+                        uploaded_bits=uploaded[u],
+                        g2a_outage=slot_outage[u],
+                        holding=holding[u],
+                        service_event=service_event[u],
+                    ))
+
+        # 6. apply service events (buffer load / edge advance / terminal done)
+        for u in range(n_uav):
+            if airborne[u] and not done[u] and service_event[u]:
+                _, tgt = uav_edges[u][edge[u]]
+                edge_hold[u] = 0.0
+                if tgt == K:
+                    done[u] = True
+                    completion[u] = t_end
+                else:
+                    unserved -= 1
+                    buf[u] = float(scenario.task_data_bits[tgt])
+                    edge[u] += 1
+                    tidx[u] = 0
+
+    # post-loop failure accounting (deadline with residual buffer)
+    upload_failures = 0
     for u in range(n_uav):
         if airborne[u] and not done[u]:
             deadline_exceeded += 1
+            if buf[u] > 0.0:
+                upload_failures += 1
 
     outage_ratio = tuple(ot / max(at, 1e-9) for ot, at in zip(outage_time, air_time))
-    feasible = (unserved == 0 and deadline_exceeded == 0 and wait_exceeded == 0
+    feasible = (unserved == 0 and upload_failures == 0 and deadline_exceeded == 0
+                and wait_exceeded == 0
                 and all(c is not None for c in completion)
                 and all(r <= limits.eps_out for r in outage_ratio))
     makespan = max((c for c in completion if c is not None), default=0.0)
     total_delay = sum(upload_time)
     violations = ViolationVector(
         unserved_tasks=unserved,
-        upload_failures=0,
+        upload_failures=upload_failures,
         outage_excess=max(0.0, max(outage_ratio) - limits.eps_out) if outage_ratio else 0.0,
         deadline_exceeded=deadline_exceeded,
         wait_exceeded=wait_exceeded,
     )
 
-    timelines = tuple(tuple(t) for t in timelines)
-    if not feasible:
-        objective = float("inf")
-    elif t_ref is not None and d_ref is not None:
-        # normalized objective (spec §5.7): wT*T/T_ref + wD*D/D_ref
-        objective = limits.w_t * makespan / t_ref + limits.w_d * total_delay / d_ref
+    if keep_timelines:
+        timelines = tuple(UAVTimeline(uav_id=u, slots=tuple(slots_by_uav[u]))
+                          for u in range(n_uav))
     else:
-        # diagnostic only — callers (solver) must pass t_ref/d_ref for the
-        # formal normalized objective; never use this raw value for ranking.
-        objective = limits.w_t * makespan + limits.w_d * total_delay
+        timelines = ()
+
+    objective = float("inf") if not feasible else objective_spec.score(makespan, total_delay)
     return EvaluationResult(
         feasible=feasible, makespan_s=makespan, total_delay_s=total_delay,
         outage_ratio=outage_ratio, violations=violations, timelines=timelines,
@@ -177,9 +248,9 @@ def evaluate_solution(scenario, library, solution, field, keep_timelines=True,
     )
 
 
-def objective(result, t_ref, d_ref, w_t, w_d):
-    """Normalized objective ``w_t*T/T_ref + w_d*D/D_ref``."""
-    return w_t * result.makespan_s / t_ref + w_d * result.total_delay_s / d_ref
+def objective(result, objective_spec):
+    """Normalized objective through the single scoring path (``ObjectiveSpec``)."""
+    return objective_spec.score(result.makespan_s, result.total_delay_s)
 
 
 def feasibility_rank(result):
@@ -195,8 +266,29 @@ def _direct_candidate(library, src, tgt):
     return min(cands, key=lambda c: candidate_cost(c, 0.5))
 
 
+def _reference_hash(scenario, ref_trace):
+    h = hashlib.sha256()
+
+    def add(obj):
+        h.update(repr(obj).encode("utf-8"))
+
+    add(scenario.n_uav); add(scenario.n_tasks)
+    add(scenario.map_seed); add(scenario.task_seed)
+    add(scenario.depot_m); add(scenario.terminal_m)
+    add(tuple(scenario.task_positions_m)); add(tuple(scenario.task_data_bits))
+    lim = scenario.limits
+    add((lim.delta_t_s, lim.v_max_mps, lim.arrive_radius_m, lim.bandwidth_hz,
+         lim.departure_step_s, lim.departure_max_s))
+    add(tuple(ref_trace))
+    return h.hexdigest()
+
+
 def compute_reference(scenario, library):
-    """Reference (T_ref, D_ref) from a greedy NN route split into n_uav groups."""
+    """Reference (T_ref, D_ref) from a greedy NN route split into n_uav groups.
+
+    Returns a frozen :class:`ReferenceValues` binding the reference to the inputs
+    that produced it via ``source_hash``.
+    """
     from segment.stc.slsqp_refine import candidate_cost
     order = []
     remaining = list(range(scenario.n_tasks))
@@ -210,17 +302,28 @@ def compute_reference(scenario, library):
 
     max_flight = 0.0
     total_upload = 0.0
+    ref_trace = []
     for g in np.array_split(order, scenario.n_uav):
         g = list(g)
         if not g:
             continue
-        seq = [(-1, g[0])] + [(g[i], g[i + 1]) for i in range(len(g) - 1)] + [(g[-1], scenario.n_tasks)]
+        seq = ([(-1, g[0])]
+               + [(g[i], g[i + 1]) for i in range(len(g) - 1)]
+               + [(g[-1], scenario.n_tasks)])
         ft = 0.0
         up = 0.0
         for src, tgt in seq:
             c = _direct_candidate(library, src, tgt)
             ft += c.flight_steps * scenario.limits.delta_t_s
             up += c.source_data_bits / max(float(np.mean(c.full_rate_bps.max(axis=1))), 1e-9)
+            ref_trace.append((src, tgt, c.candidate_id))
         max_flight = max(max_flight, ft)
         total_upload += up
-    return float(max_flight), float(total_upload)
+    return ReferenceValues(t_ref_s=float(max_flight), d_ref_s=float(total_upload),
+                           source_hash=_reference_hash(scenario, ref_trace))
+
+
+def default_objective_spec(scenario, library):
+    """Frozen reference + scenario weights; the single search entry point."""
+    return ObjectiveSpec(reference=compute_reference(scenario, library),
+                         w_t=scenario.limits.w_t, w_d=scenario.limits.w_d)

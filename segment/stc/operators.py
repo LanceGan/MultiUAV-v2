@@ -8,7 +8,7 @@ may use single-UAV candidate costs.
 
 import numpy as np
 
-from segment.stc.evaluator import evaluate_solution
+from segment.stc.evaluator import default_objective_spec, evaluate_solution
 from segment.stc.slsqp_refine import candidate_cost
 from segment.stc.types import PlanSolution, SearchResult
 
@@ -64,17 +64,18 @@ def _two_opt(sol, scenario, library, rng):
     return _plan(tuple(tuple(r) for r in routes), scenario, library, sol.departure_steps)
 
 
-def _result(scenario, library, field, solution):
-    return evaluate_solution(scenario, library, solution, field)
+def _result(scenario, library, field, solution, objective_spec):
+    return evaluate_solution(scenario, library, solution, field, objective_spec)
 
 
 def run_nearest_neighbor_2opt(scenario, library, field, seed=42):
+    spec = default_objective_spec(scenario, library)
     best = build_initial_solution(scenario, library, seed)
-    best_res = _result(scenario, library, field, best)
+    best_res = _result(scenario, library, field, best, spec)
     rng = np.random.RandomState(seed)
     for _ in range(200):
         cand = _two_opt(best, scenario, library, rng)
-        res = _result(scenario, library, field, cand)
+        res = _result(scenario, library, field, cand, spec)
         if (not best_res.feasible and res.feasible) or (res.feasible and res.objective < best_res.objective):
             best, best_res = cand, res
     return SearchResult(best_solution=best, best_result=best_res,
@@ -82,19 +83,21 @@ def run_nearest_neighbor_2opt(scenario, library, field, seed=42):
 
 
 def run_cheapest_insertion(scenario, library, field, seed=42):
+    spec = default_objective_spec(scenario, library)
     sol = build_initial_solution(scenario, library, seed)
-    res = _result(scenario, library, field, sol)
+    res = _result(scenario, library, field, sol, spec)
     return SearchResult(best_solution=sol, best_result=res, search_trace=(),
                         evaluator_calls={"full": 1})
 
 
 def run_lns_sa(scenario, library, field, seed=42, iters=200):
+    spec = default_objective_spec(scenario, library)
     best = build_initial_solution(scenario, library, seed)
-    best_res = _result(scenario, library, field, best)
+    best_res = _result(scenario, library, field, best, spec)
     rng = np.random.RandomState(seed)
     for _ in range(iters):
         cand = _two_opt(best, scenario, library, rng)
-        res = _result(scenario, library, field, cand)
+        res = _result(scenario, library, field, cand, spec)
         if (not best_res.feasible and res.feasible) or (res.feasible and res.objective < best_res.objective):
             best, best_res = cand, res
     return SearchResult(best_solution=best, best_result=best_res,

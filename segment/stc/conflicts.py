@@ -14,8 +14,8 @@ def build_conflict_report(result, bandwidth_hz, delta_t_s):
 
     by_time = {}
     for u, tl in enumerate(timelines):
-        for (t, sec, buf, alloc, fr) in tl:
-            by_time.setdefault(t, []).append((u, sec, buf, alloc, fr))
+        for slot in tl.slots:
+            by_time.setdefault(slot.time_start_s, []).append((u, slot))
 
     total_overlap = 0.0
     lost_bits = 0.0
@@ -23,15 +23,15 @@ def build_conflict_report(result, bandwidth_hz, delta_t_s):
     for t in sorted(by_time):
         recs = by_time[t]
         co = {}
-        for (u, sec, buf, alloc, fr) in recs:
-            if buf > 0.0:
-                co[sec] = co.get(sec, 0) + 1
+        for (u, slot) in recs:
+            if slot.active_uploader:
+                co[slot.serving_sector] = co.get(slot.serving_sector, 0) + 1
         for cnt in co.values():
             if cnt > 1:
                 total_overlap += (cnt - 1) * delta_t_s
-        for (u, sec, buf, alloc, fr) in recs:
-            if buf > 0.0:
-                lost_rate = fr * (1.0 - alloc / bandwidth_hz)
+        for (u, slot) in recs:
+            if slot.active_uploader:
+                lost_rate = slot.rate_bps * (1.0 - slot.allocated_bandwidth_hz / bandwidth_hz)
                 lost_bits += lost_rate * delta_t_s
                 per_uav_loss[u] += lost_rate * delta_t_s
 
