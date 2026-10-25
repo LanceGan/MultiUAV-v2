@@ -142,7 +142,10 @@ class EvaluationCache:
         self.incremental_calls += 1
 
         if not affected:
-            # no change: honest cache hit, zero slots recomputed
+            # no change: honest cache hit, zero slots recomputed.  Set the
+            # pending slot so a later commit() of this no-op does not resurrect
+            # a previously rejected move's state.
+            self._pending = (solution, self.base_result, dict(self.snapshots))
             return self.base_result
 
         slot = self._resume_slot(per_uav_earliest)
@@ -186,10 +189,24 @@ class EvaluationCache:
                    incremental_result.feasible))
 
     def commit(self, solution=None, result=None):
-        """Advance the committed incumbent to the last evaluated move."""
-        if self._pending is None:
-            return
-        solution, result, snapshots = self._pending
+        """Advance the committed incumbent to the last evaluated (accepted) move.
+
+        Verifies the pending candidate actually matches ``solution`` so a no-op
+        commit (candidate == incumbent) can never resurrect a previously
+        rejected move's base state.
+        """
+        if solution is None:
+            if self._pending is None:
+                return
+            solution, result, snapshots = self._pending
+        elif self._pending is not None and self._pending[0] == solution:
+            result = self._pending[1]
+            snapshots = self._pending[2]
+        else:
+            # no-op or mismatched pending: keep the current committed snapshots
+            snapshots = dict(self.snapshots)
+            if result is None:
+                result = self.base_result
         self.base_solution = solution
         self.base_result = result
         self.snapshots = snapshots

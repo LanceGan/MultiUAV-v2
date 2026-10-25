@@ -103,6 +103,32 @@ def test_incremental_counts_slots_honestly():
     assert 0 < cache.recomputed_slots < cache.max_slots
 
 
+def test_noop_commit_does_not_resurrect_rejected_move():
+    sc, field, lib = _setup(4)
+    base = _sol(sc, lib, [(0, 1, 2), (3,)])
+    moved = _sol(sc, lib, [(0, 2, 1), (3,)])   # a real (rejected) move
+
+    cache = EvaluationCache.from_full(sc, lib, field, base, _spec())
+
+    # rejected move: evaluate but do NOT commit -> _pending holds `moved`
+    cache.evaluate_after_move(moved, frozenset({0}), 1)
+
+    # no-op move: candidate equals the incumbent; commit it
+    cache.evaluate_after_move(base, frozenset(), None)
+    cache.commit(base, cache.base_result)
+
+    # the committed base must still be `base`, never the rejected `moved`
+    assert cache.base_solution == base
+    assert cache.base_solution != moved
+
+    # a subsequent real move must evaluate against the correct base
+    moved2 = _sol(sc, lib, [(1, 0, 2), (3,)])
+    inc = cache.evaluate_after_move(moved2, frozenset({0}), 0)
+    full = real_evaluate_solution(sc, lib, moved2, field, _spec())
+    assert inc.makespan_s == pytest.approx(full.makespan_s)
+    assert inc.total_delay_s == pytest.approx(full.total_delay_s)
+
+
 def test_periodic_full_replay_audit_detects_divergence(monkeypatch):
     sc, field, lib = _setup(4)
     base = _sol(sc, lib, [(0, 1, 2), (3,)])
