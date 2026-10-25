@@ -68,3 +68,20 @@ def test_reference_is_positive_and_deterministic():
     r2 = compute_reference(sc, lib)
     assert r1 == r2
     assert r1[0] > 0.0 and r1[1] > 0.0
+
+
+def test_evaluator_uses_normalized_objective():
+    from segment.stc.evaluator import evaluate_solution
+    sc = _scenario()
+    field = _MockField(sc.n_sectors)
+    lib = {}
+    for src in range(-1, sc.n_tasks + 1):
+        for tgt in range(sc.n_tasks + 1):
+            if src != tgt:
+                lib[(src, tgt)] = [generate_straight_hold(sc, field, src, tgt)]
+    from segment.stc.operators import build_initial_solution
+    sol = build_initial_solution(sc, lib)
+    res = evaluate_solution(sc, lib, sol, field, t_ref=200.0, d_ref=100.0)
+    expected = sc.limits.w_t * res.makespan_s / 200.0 + sc.limits.w_d * res.total_delay_s / 100.0
+    import pytest as _pytest
+    assert res.objective == _pytest.approx(expected)

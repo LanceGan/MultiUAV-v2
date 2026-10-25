@@ -11,22 +11,28 @@ from segment.stc.evaluator import evaluate_solution
 
 
 class EvaluationCache:
-    def __init__(self, scenario, library, field, base_solution, base_result):
+    def __init__(self, scenario, library, field, base_solution, base_result,
+                 t_ref=None, d_ref=None):
         self.scenario = scenario
         self.library = library
         self.field = field
         self.base_solution = base_solution
         self.base_result = base_result
+        self.t_ref = t_ref
+        self.d_ref = d_ref
         self.full_calls = 1
         self.incremental_calls = 0
         self.recomputed_slots = 0
 
     @classmethod
-    def from_full(cls, scenario, library, field, solution):
+    def from_full(cls, scenario, library, field, solution, t_ref=None, d_ref=None):
         return cls(scenario, library, field, solution,
-                   evaluate_solution(scenario, library, solution, field))
+                   evaluate_solution(scenario, library, solution, field,
+                                     t_ref=t_ref, d_ref=d_ref),
+                   t_ref=t_ref, d_ref=d_ref)
 
     def evaluate_after_move(self, solution, affected_uavs):
         self.incremental_calls += 1
         self.full_calls += 1
-        return evaluate_solution(self.scenario, self.library, solution, self.field)
+        return evaluate_solution(self.scenario, self.library, solution, self.field,
+                                 t_ref=self.t_ref, d_ref=self.d_ref)

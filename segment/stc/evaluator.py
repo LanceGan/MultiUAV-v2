@@ -22,7 +22,8 @@ def select_serving_sector(sample, has_payload, reliability_limit):
     return int(np.argmin(sample.g2a_outage))
 
 
-def evaluate_solution(scenario, library, solution, field, keep_timelines=True):
+def evaluate_solution(scenario, library, solution, field, keep_timelines=True,
+                      t_ref=None, d_ref=None):
     limits = scenario.limits
     n_uav = scenario.n_uav
     K = scenario.n_tasks
@@ -160,7 +161,15 @@ def evaluate_solution(scenario, library, solution, field, keep_timelines=True):
     )
 
     timelines = tuple(tuple(t) for t in timelines)
-    objective = (limits.w_t * makespan + limits.w_d * total_delay) if feasible else float("inf")
+    if not feasible:
+        objective = float("inf")
+    elif t_ref is not None and d_ref is not None:
+        # normalized objective (spec §5.7): wT*T/T_ref + wD*D/D_ref
+        objective = limits.w_t * makespan / t_ref + limits.w_d * total_delay / d_ref
+    else:
+        # diagnostic only — callers (solver) must pass t_ref/d_ref for the
+        # formal normalized objective; never use this raw value for ranking.
+        objective = limits.w_t * makespan + limits.w_d * total_delay
     return EvaluationResult(
         feasible=feasible, makespan_s=makespan, total_delay_s=total_delay,
         outage_ratio=outage_ratio, violations=violations, timelines=timelines,

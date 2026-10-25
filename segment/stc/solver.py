@@ -7,7 +7,7 @@ solution.  Deterministic under a fixed ``method_seed``.
 
 import numpy as np
 
-from segment.stc.evaluator import feasibility_rank
+from segment.stc.evaluator import compute_reference, feasibility_rank
 from segment.stc.incremental import EvaluationCache
 from segment.stc.stc_operators import (
     SearchContext,
@@ -42,7 +42,9 @@ class STCALNS:
     def solve(self, initial, iterations=1000, method_seed=42):
         rng = np.random.RandomState(method_seed)
         ctx = SearchContext(scenario=self.scenario, library=self.library, field=self.field)
-        cache = EvaluationCache.from_full(self.scenario, self.library, self.field, initial)
+        t_ref, d_ref = compute_reference(self.scenario, self.library)
+        cache = EvaluationCache.from_full(self.scenario, self.library, self.field,
+                                          initial, t_ref=t_ref, d_ref=d_ref)
 
         wd = {n: 1.0 for n in destroy_operators}
         wr = {n: 1.0 for n in repair_operators}
