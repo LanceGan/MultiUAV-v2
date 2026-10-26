@@ -43,6 +43,7 @@ METHODS = ("library_open_loop", "proposed_stc_alns")
 
 DEFAULT_CONFIG = {
     "uav_nums": [2], "map_seeds": [42], "task_seeds": [42],
+    "method_seeds": [0, 1, 2, 3, 4],
     "smoke": False, "smoke_tasks": 6, "spacing_m": 1000.0,
     "iterations": 1000,
     "generator_config": {"straight_hold": True},
@@ -127,7 +128,8 @@ def _scale_scenarios(base, family):
 
 
 def _make_record(method, result, sc, method_seed=None, runtime_s=None,
-                 evaluator_calls=None):
+                 evaluator_calls=None, iterations=None,
+                 iterations_executed=None, reference_hash=None):
     return {
         "method": method, "status": "evaluated",
         "feasible": bool(result.feasible),
@@ -138,6 +140,9 @@ def _make_record(method, result, sc, method_seed=None, runtime_s=None,
         "method_seed": method_seed,
         "runtime_s": runtime_s,
         "evaluator_calls": evaluator_calls,
+        "iterations": iterations,
+        "iterations_executed": iterations_executed,
+        "reference_hash": reference_hash,
         "n_uav": sc.n_uav, "n_tasks": sc.n_tasks,
         "bandwidth_hz": sc.limits.bandwidth_hz,
         "uplink_power_w": sc.limits.uplink_power_w,
@@ -145,35 +150,40 @@ def _make_record(method, result, sc, method_seed=None, runtime_s=None,
     }
 
 
-def _eval_methods(sc, field, gen_cfg, seed, iterations):
+def _eval_methods(sc, field, gen_cfg, method_seed, iterations):
     """Evaluate both library-open-loop and Proposed STC-ALNS on ``sc``.
 
-    Each method records its own method seed, wall-clock runtime, and evaluator
-    call count so RQ5 is auditable.  The two methods use independent method
-    seeds (open-loop ``seed``, Proposed ``seed + 1``) to avoid coupling their
-    randomness.
+    Each record carries the method seed, wall-clock runtime, evaluator call
+    count, configured/executed iteration counts, and the frozen objective
+    reference identity so RQ5 is fully auditable per (method, method seed).
     """
     library = build_all_pairs_library(sc, field, generator_config=gen_cfg)
     lib = library.candidates
     spec = default_objective_spec(sc, lib)
+    reference_hash = spec.reference.source_hash
     seg = seg_view(lib, sc, field)
-    initial = build_ebtas_initial_solution(sc, seg, seed=seed)
+    initial = build_ebtas_initial_solution(sc, seg, seed=method_seed)
 
     records = []
     t0 = time.perf_counter()
     res = evaluate_solution(sc, lib, initial, field, spec, keep_timelines=False)
     records.append(_make_record(
-        "library_open_loop", res, sc, method_seed=seed,
+        "library_open_loop", res, sc, method_seed=method_seed,
         runtime_s=time.perf_counter() - t0,
-        evaluator_calls={"full": 1, "incremental": 0}))
+        evaluator_calls={"full": 1, "incremental": 0},
+        iterations=iterations, iterations_executed=1,
+        reference_hash=reference_hash))
 
     t0 = time.perf_counter()
     sr = STCALNS(sc, lib, field).solve(initial, iterations=iterations,
-                                       method_seed=seed + 1)
+                                       method_seed=method_seed)
     records.append(_make_record(
-        "proposed_stc_alns", sr.best_result, sc, method_seed=seed + 1,
+        "proposed_stc_alns", sr.best_result, sc, method_seed=method_seed,
         runtime_s=time.perf_counter() - t0,
-        evaluator_calls=sr.evaluator_calls))
+        evaluator_calls=sr.evaluator_calls,
+        iterations=iterations,
+        iterations_executed=len(sr.search_trace),
+        reference_hash=reference_hash))
     return records
 
 
@@ -237,12 +247,14 @@ def main(argv=None):
         base = (small_scenario(base, cfg["smoke_tasks"]) if cfg["smoke"]
                 else base)
         recs = []
-        for run_fn in (run_scale, run_density_scale):
-            out = run_fn(base, field_factory, seed=task_seed,
-                         generator_config=cfg["generator_config"],
-                         iterations=cfg["iterations"])
-            recs.extend({**r, "base_uav_num": uav_num, "base_map_seed": map_seed,
-                         "base_task_seed": task_seed} for r in out["records"])
+        for method_seed in cfg["method_seeds"]:
+            for run_fn in (run_scale, run_density_scale):
+                out = run_fn(base, field_factory, seed=method_seed,
+                             generator_config=cfg["generator_config"],
+                             iterations=cfg["iterations"])
+                recs.extend({**r, "base_uav_num": uav_num,
+                             "base_map_seed": map_seed,
+                             "base_task_seed": task_seed} for r in out["records"])
         return recs
 
     def summary_fn(records_all):

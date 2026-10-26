@@ -14,6 +14,7 @@ completion rule) is correctly reported infeasible.
 """
 
 import argparse
+import hashlib
 import json
 import math
 from dataclasses import asdict, is_dataclass
@@ -21,10 +22,9 @@ from pathlib import Path
 
 import numpy as np
 
-from segment.stc.evaluator import evaluate_solution, select_serving_sector
+from segment.stc.evaluator import evaluate_solution
 from segment.stc.types import (
     PlanSolution,
-    RadioSample,
     STCScenario,
     SegmentCandidate,
     SegmentLibrary,
@@ -192,82 +192,87 @@ def _relabel_candidate(cand, new_source, new_target):
         source_data_bits=cand.source_data_bits, rankable=cand.rankable)
 
 
-def _segment_tdo(candidate, scenario):
-    """Segment-level T/D/O via the authoritative per-segment slot-machine rules.
+def _candidate_content_hash(candidate):
+    """Content hash of a segment candidate (identity of its trajectory).
 
-    Uses the reliable-then-rate serving sector, a slot-by-slot upload of the
-    source payload, and the G2A outage along the serving-sector path, with any
-    residual upload draining at the hold boundary (bounded by ``max_wait_s``).
-    ``upload_complete`` records whether the source payload fully drained within
-    the flight + hold budget (the single-segment analogue of the evaluator's
-    upload/wait failure rules).
+    Two candidates with the same ID but different traces/rates/sectors/outage
+    hash differently, so swapping a candidate is always detectable in the
+    persisted per-edge evidence.
     """
-    dt = scenario.limits.delta_t_s
-    eps_out = scenario.limits.eps_out
-    P = float(candidate.source_data_bits)
-    flight = float(candidate.flight_steps * dt)
-    n = len(candidate.positions_m)
-
-    remaining = P
-    upload_time = 0.0
-    outage_time = 0.0
-    air_time = 0.0
-    for t in range(n):
-        a2g = candidate.full_rate_bps[t] / scenario.limits.bandwidth_hz
-        g2a = candidate.g2a_outage[t]
-        sec = int(select_serving_sector(RadioSample(a2g, g2a),
-                                        remaining > 0, eps_out))
-        outage_time += float(g2a[sec]) * dt
-        air_time += dt
-        if remaining > 0:
-            rate = float(candidate.full_rate_bps[t][sec])
-            remaining = max(0.0, remaining - rate * dt)
-            upload_time += dt
-    if remaining > 0 and n >= 1:
-        # residual drains at the hold boundary (final anchor) rate, bounded by
-        # the maximum pre-arrival waiting budget
-        t = n - 1
-        a2g = candidate.full_rate_bps[t] / scenario.limits.bandwidth_hz
-        g2a = candidate.g2a_outage[t]
-        sec = int(select_serving_sector(RadioSample(a2g, g2a), True, eps_out))
-        rate = float(candidate.full_rate_bps[t][sec])
-        while remaining > 0 and upload_time <= scenario.limits.max_wait_s:
-            remaining = max(0.0, remaining - rate * dt)
-            upload_time += dt
-    return {
-        "flight_time_s": flight,
-        "upload_delay_s": float(upload_time),
-        "outage": float(outage_time / max(air_time, 1e-9)),
-        "sector_diversity": _sector_entropy(candidate),
-        "upload_complete": bool(remaining <= 0.0),
-    }
+    h = hashlib.sha256()
+    h.update(repr((candidate.candidate_id, int(candidate.source),
+                   int(candidate.target), candidate.generator,
+                   int(candidate.flight_steps),
+                   tuple(float(x) for x in candidate.hold_position_m),
+                   float(candidate.source_data_bits),
+                   bool(candidate.rankable))).encode("utf-8"))
+    for arr in (candidate.positions_m, candidate.full_rate_bps,
+                candidate.sector_ids, candidate.g2a_outage):
+        h.update(np.ascontiguousarray(np.asarray(arr)).tobytes())
+    return h.hexdigest()
 
 
 def evaluate_segment(scenario, candidate, field, objective_spec):
-    """Authoritative per-segment metrics (single source of truth).
+    """Authoritative per-segment metrics via the synchronous slot machine.
 
-    ``feasible`` and T/D/O all come from the SAME segment-level slot-machine
-    rules (:func:`_segment_tdo`), restricted to the segment's own trace.  No
-    virtual depot/terminal edges are introduced, so the G2A outage is never
-    diluted by extra entry/exit slots, and the reported T/D/O are exactly the
-    values the feasibility check used.  A ``rankable=False`` candidate (a
-    relaxation reference, or a learned trajectory that never reached the target)
-    is infeasible.  ``field`` / ``objective_spec`` are accepted for caller
-    compatibility; the segment rules are self-contained on the candidate.
+    Runs :func:`~segment.stc.evaluator.evaluate_solution` on a single-UAV,
+    single-task plan whose only payload-carrying edge is the segment under test
+    (the depot touches the source position zero-length and the target is the
+    terminal), so the G2A outage, source-point upload, endpoint drain, hold,
+    max-wait and deadline are ALL enforced by the authoritative evaluator —
+    never a re-implementation that could disagree with it.  A ``rankable=False``
+    candidate (a relaxation reference, or a learned trajectory that never
+    reached the target) is infeasible.  Every result carries the candidate id
+    and a trajectory content hash for evidence identity.
     """
-    metrics = _segment_tdo(candidate, scenario)
+    from segment.stc.generators import generate_straight_hold
+
+    base = {
+        "candidate_id": candidate.candidate_id,
+        "trajectory_hash": _candidate_content_hash(candidate),
+        "sector_diversity": _sector_entropy(candidate),
+    }
     if not candidate.rankable:
-        metrics["feasible"] = False
-        metrics["failure_reason"] = "non-rankable candidate (no arrival)"
-        return metrics
-    feasible = (metrics["upload_complete"]
-                and metrics["outage"] <= scenario.limits.eps_out)
-    metrics["feasible"] = bool(feasible)
-    metrics["failure_reason"] = (None if feasible
-                                 else ("upload incomplete"
-                                       if not metrics["upload_complete"]
-                                       else "route outage exceeds eps_out"))
-    return metrics
+        base.update({"feasible": False,
+                     "failure_reason": "non-rankable candidate (no arrival)",
+                     "flight_time_s": None, "upload_delay_s": None,
+                     "outage": None})
+        return base
+
+    src, tgt = candidate.source, candidate.target
+    K = scenario.n_tasks
+    A = np.asarray(scenario.depot_m if src == -1
+                   else scenario.task_positions_m[src], dtype=float)
+    B = np.asarray(scenario.terminal_m if tgt == K
+                   else scenario.task_positions_m[tgt], dtype=float)
+    P = float(candidate.source_data_bits)
+
+    sc = STCScenario(
+        n_uav=1, n_tasks=1,
+        task_positions_m=(tuple(A),),
+        task_data_bits=(P,),
+        depot_m=tuple(A), terminal_m=tuple(B),
+        limits=scenario.limits, length_m=scenario.length_m,
+        width_m=scenario.width_m, n_bs=scenario.n_bs,
+        task_seed=scenario.task_seed, map_seed=scenario.map_seed)
+
+    d0 = generate_straight_hold(sc, field, -1, 0)   # depot(A) -> task0(A), zero length
+    seg = _relabel_candidate(candidate, 0, 1)       # task0(A) -> terminal(B): the segment
+    lib = {(-1, 0): (d0,), (0, 1): (seg,)}
+    sol = PlanSolution(routes=((0,),),
+                       candidate_ids=((d0.candidate_id, seg.candidate_id),))
+
+    result = evaluate_solution(sc, lib, sol, field, objective_spec,
+                               keep_timelines=False)
+    base.update({
+        "feasible": bool(result.feasible),
+        "flight_time_s": float(result.makespan_s),
+        "upload_delay_s": float(result.total_delay_s),
+        "outage": float(result.outage_ratio[0]),
+        "failure_reason": (None if result.feasible
+                           else "synchronous evaluation infeasible"),
+    })
+    return base
 
 
 # --------------------------------------------------------------------------- #
@@ -411,7 +416,11 @@ def run_lifecycle(runner_name, cfg, run_id, matrix, per_scenario, summary_fn,
             # an overrun during the LAST scenario must not seal success
             _check_timeout()
         _check_timeout()
-        rc.write_bytes("summary.json", json_bytes(summary_fn(records_all)))
+        summary = summary_fn(records_all)
+        # summary_fn itself may overrun the timeout — success must not seal then
+        _check_timeout()
+        rc.write_bytes("summary.json", json_bytes(summary))
+        _check_timeout()
         rc.finalize("success")
     except KeyboardInterrupt:
         _persist_partial()

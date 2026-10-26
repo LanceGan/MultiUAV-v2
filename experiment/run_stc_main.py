@@ -262,6 +262,19 @@ def _result_payload(r, scenario):
     }
 
 
+def _unavailable_payload(method, reason, cfg):
+    """Explicit unavailable/failed record for one method (declared or runtime)."""
+    return dict(status="unavailable", feasible=None, objective=None,
+                makespan_s=None, total_delay_s=None, outage_ratio=None,
+                violations=None, balance=None, conflict_lost_bits=None,
+                conflict_duration_s=None, waiting_s=None,
+                evaluator_calls={"full": 0, "incremental": 0},
+                failure_reason=reason, availability_declared=True,
+                label=METHOD_SPECS[method].label, proposed=False,
+                provenance={"required_method": method,
+                            "checkpoint_path": cfg["sac_checkpoint"]})
+
+
 def _build_context(uav_num, map_seed, task_seed, cfg):
     """Build the shared scenario/field/library/reference for one scenario.
 
@@ -324,22 +337,24 @@ def _run_scenario(sc, field, library, reference, sac_result,
                       "world_hash": field.world_hash}
             start = time.perf_counter()
             if method in unavailable:
-                payload = dict(status="unavailable", feasible=None, objective=None,
-                               makespan_s=None, total_delay_s=None, outage_ratio=None,
-                               violations=None, balance=None, conflict_lost_bits=None,
-                               conflict_duration_s=None, waiting_s=None,
-                               evaluator_calls={"full": 0, "incremental": 0},
-                               failure_reason=unavailable[method], availability_declared=True,
-                               label=METHOD_SPECS[method].label, proposed=False,
-                               provenance={"required_method": method,
-                                           "checkpoint_path": cfg["sac_checkpoint"]})
+                payload = _unavailable_payload(method, unavailable[method], cfg)
                 solution, trace = None, None
             else:
-                r = run_system_baseline(method, sc, library, field, seed=method_seed,
-                                        method_seed=method_seed, iterations=cfg["iterations"],
-                                        solver_config=solver_config, **options)
-                payload = _result_payload(r, sc)
-                solution, trace = r.solution, r.result.timelines
+                try:
+                    r = run_system_baseline(method, sc, library, field,
+                                            seed=method_seed,
+                                            method_seed=method_seed,
+                                            iterations=cfg["iterations"],
+                                            solver_config=solver_config,
+                                            **options)
+                    payload = _result_payload(r, sc)
+                    solution, trace = r.solution, r.result.timelines
+                except Exception as exc:
+                    # one method failing must not drop the earlier methods'
+                    # completed results within this scenario
+                    payload = _unavailable_payload(
+                        method, "runtime failure: %r" % exc, cfg)
+                    solution, trace = None, None
             payload["runtime_s"] = time.perf_counter() - start
             records.append(dict(common, **payload))
             solutions.append({"record_id": record_id, "solution": solution})
