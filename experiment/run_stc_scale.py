@@ -11,6 +11,7 @@ both directions (fewer and more tasks) within the same region.
 import argparse
 import os
 import sys
+import time
 from dataclasses import replace
 
 import numpy as np
@@ -66,6 +67,30 @@ def _synthetic_scenario(n_uav, n_tasks, length_m, n_bs, task_seed, map_seed,
         task_seed=task_seed, map_seed=map_seed)
 
 
+def _extend_scenario(base, n_tasks):
+    """Extend ``base`` to ``n_tasks`` by KEEPING every existing task / payload /
+    depot / terminal and appending deterministic extra tasks within the SAME
+    region.
+
+    ``task_scale`` must only add tasks; it must never regenerate the original
+    tasks, payloads or depot (which would silently change the comparison point).
+    """
+    n_new = n_tasks - base.n_tasks
+    rng = np.random.RandomState((base.task_seed * 1000003 + n_tasks * 7919)
+                                & 0x7fffffff)
+    positions = base.task_positions_m + tuple(
+        (float(rng.uniform(0.05 * base.length_m, 0.95 * base.length_m)),
+         float(rng.uniform(0.05 * base.width_m, 0.95 * base.width_m)))
+        for _ in range(n_new))
+    data = base.task_data_bits + tuple(
+        float(1e6 * (10.0 + 20.0 * rng.rand())) for _ in range(n_new))
+    return STCScenario(
+        n_uav=base.n_uav, n_tasks=n_tasks, task_positions_m=positions,
+        task_data_bits=data, depot_m=base.depot_m, terminal_m=base.terminal_m,
+        limits=base.limits, length_m=base.length_m, width_m=base.width_m,
+        n_bs=base.n_bs, task_seed=base.task_seed, map_seed=base.map_seed)
+
+
 def _scale_scenarios(base, family):
     variants = []
     if family == "uav_count":
@@ -77,12 +102,9 @@ def _scale_scenarios(base, family):
             if k <= base.n_tasks:
                 variants.append(("tasks_%d" % k, small_scenario(base, k)))
             else:
-                # more tasks within the SAME region/BS (density within fixed area)
-                variants.append((
-                    "tasks_%d" % k,
-                    _synthetic_scenario(base.n_uav, k, base.length_m, base.n_bs,
-                                        base.task_seed, base.map_seed,
-                                        base.limits)))
+                # more tasks within the SAME region/BS, keeping the original
+                # tasks/depot/terminal (density within a fixed area)
+                variants.append(("tasks_%d" % k, _extend_scenario(base, k)))
     elif family == "payload":
         for f in (0.5, 2.0):
             variants.append(("payload_x%.1f" % f,
@@ -104,7 +126,8 @@ def _scale_scenarios(base, family):
     return variants
 
 
-def _make_record(method, result, sc):
+def _make_record(method, result, sc, method_seed=None, runtime_s=None,
+                 evaluator_calls=None):
     return {
         "method": method, "status": "evaluated",
         "feasible": bool(result.feasible),
@@ -112,6 +135,9 @@ def _make_record(method, result, sc):
                       else float(result.objective)),
         "makespan_s": float(result.makespan_s),
         "total_delay_s": float(result.total_delay_s),
+        "method_seed": method_seed,
+        "runtime_s": runtime_s,
+        "evaluator_calls": evaluator_calls,
         "n_uav": sc.n_uav, "n_tasks": sc.n_tasks,
         "bandwidth_hz": sc.limits.bandwidth_hz,
         "uplink_power_w": sc.limits.uplink_power_w,
@@ -120,7 +146,13 @@ def _make_record(method, result, sc):
 
 
 def _eval_methods(sc, field, gen_cfg, seed, iterations):
-    """Evaluate both library-open-loop and Proposed STC-ALNS on ``sc``."""
+    """Evaluate both library-open-loop and Proposed STC-ALNS on ``sc``.
+
+    Each method records its own method seed, wall-clock runtime, and evaluator
+    call count so RQ5 is auditable.  The two methods use independent method
+    seeds (open-loop ``seed``, Proposed ``seed + 1``) to avoid coupling their
+    randomness.
+    """
     library = build_all_pairs_library(sc, field, generator_config=gen_cfg)
     lib = library.candidates
     spec = default_objective_spec(sc, lib)
@@ -128,12 +160,20 @@ def _eval_methods(sc, field, gen_cfg, seed, iterations):
     initial = build_ebtas_initial_solution(sc, seg, seed=seed)
 
     records = []
+    t0 = time.perf_counter()
     res = evaluate_solution(sc, lib, initial, field, spec, keep_timelines=False)
-    records.append(_make_record("library_open_loop", res, sc))
+    records.append(_make_record(
+        "library_open_loop", res, sc, method_seed=seed,
+        runtime_s=time.perf_counter() - t0,
+        evaluator_calls={"full": 1, "incremental": 0}))
 
+    t0 = time.perf_counter()
     sr = STCALNS(sc, lib, field).solve(initial, iterations=iterations,
-                                       method_seed=seed)
-    records.append(_make_record("proposed_stc_alns", sr.best_result, sc))
+                                       method_seed=seed + 1)
+    records.append(_make_record(
+        "proposed_stc_alns", sr.best_result, sc, method_seed=seed + 1,
+        runtime_s=time.perf_counter() - t0,
+        evaluator_calls=sr.evaluator_calls))
     return records
 
 

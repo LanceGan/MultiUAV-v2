@@ -121,12 +121,23 @@ def _aggregate(gen, per_edge, n_candidates, compute, common_edges):
     t = float(np.mean([m["flight_time_s"] for m in cf])) if cf else None
     d = float(np.mean([m["upload_delay_s"] for m in cf])) if cf else None
     o = float(np.mean([m["outage"] for m in cf])) if cf else None
+    # Per-edge evaluation and the common-feasible edge IDs are persisted so a
+    # freeze-time gate can verify real edge coverage (not just aggregate means).
+    per_edge_records = [{
+        "edge": [int(e[0]), int(e[1])],
+        "feasible": bool(per_edge[e]["feasible"]),
+        "flight_time_s": per_edge[e].get("flight_time_s"),
+        "upload_delay_s": per_edge[e].get("upload_delay_s"),
+        "outage": per_edge[e].get("outage"),
+    } for e in edges]
     return {
         "generator": gen, "status": "evaluated",
         "n_edges": len(edges), "n_candidates": int(n_candidates),
         "feasible_frac": feasible_frac, "common_feasible_n": len(cf),
         "t_mean_s": t, "d_mean_s": d, "o_mean": o,
         "sector_diversity": div, "compute_time_s": float(compute),
+        "per_edge": per_edge_records,
+        "common_feasible_edges": sorted([list(e) for e in common_edges]),
         "failure_reason": None,
     }
 

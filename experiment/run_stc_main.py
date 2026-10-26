@@ -481,9 +481,24 @@ def main(argv=None):
     rc.register_input("resolved_config", data=_json_bytes(cfg))
     if cfg["sac_checkpoint"] and Path(cfg["sac_checkpoint"]).is_file():
         rc.register_input("checkpoint_sac", path=cfg["sac_checkpoint"])
+    rc.write_bytes("resolved_config.json", _json_bytes(cfg))
     records, solutions, timelines = [], [], []
+    rq2_records = []
+
+    def _persist_partial():
+        # completed scenarios survive a crash: write the partial records now so
+        # finalize("failed") seals them instead of an empty run directory.
+        for name, value in (("raw_records.json", records),
+                            ("solutions.json", solutions),
+                            ("timelines.json", timelines),
+                            ("rq2.json", rq2_records)):
+            try:
+                rc.write_bytes(name, _json_bytes(value))
+            except Exception:
+                pass
+
+    summary = None
     try:
-        rq2_records = []
         for uav_num, map_seed, task_seed in itertools.product(
                 cfg["uav_nums"], cfg["map_seeds"], cfg["task_seeds"]):
             sc, field, library, reference, sac_result = _build_context(
@@ -500,6 +515,7 @@ def main(argv=None):
             rq2.update({"uav_num": uav_num, "map_seed": map_seed,
                         "task_seed": task_seed})
             rq2_records.append(rq2)
+            _persist_partial()   # incremental checkpoint after each scenario
         _assert_coverage(records, cfg)
 
         counts = Counter((r["method"], r["status"]) for r in records)
@@ -508,12 +524,14 @@ def main(argv=None):
                    "unavailable_count": sum(r["status"] == "unavailable" for r in records),
                    "inventory": [{"method": method, "status": status, "count": count}
                                  for (method, status), count in sorted(counts.items())]}
-        for name, value in (("resolved_config.json", cfg), ("raw_records.json", records),
-                            ("solutions.json", solutions), ("timelines.json", timelines),
-                            ("summary.json", summary), ("rq2.json", rq2_records)):
-            rc.write_bytes(name, _json_bytes(value))
+        rc.write_bytes("summary.json", _json_bytes(summary))
         rc.finalize("success")
+    except KeyboardInterrupt:
+        _persist_partial()
+        rc.finalize("failed")
+        raise
     except Exception:
+        _persist_partial()
         rc.finalize("failed")
         raise
     print("run written to %s (%d records, %d unavailable)" % (

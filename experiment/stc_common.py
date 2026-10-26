@@ -193,11 +193,14 @@ def _relabel_candidate(cand, new_source, new_target):
 
 
 def _segment_tdo(candidate, scenario):
-    """Segment-level T/D/O via the authoritative per-segment rules.
+    """Segment-level T/D/O via the authoritative per-segment slot-machine rules.
 
     Uses the reliable-then-rate serving sector, a slot-by-slot upload of the
     source payload, and the G2A outage along the serving-sector path, with any
     residual upload draining at the hold boundary (bounded by ``max_wait_s``).
+    ``upload_complete`` records whether the source payload fully drained within
+    the flight + hold budget (the single-segment analogue of the evaluator's
+    upload/wait failure rules).
     """
     dt = scenario.limits.delta_t_s
     eps_out = scenario.limits.eps_out
@@ -236,48 +239,34 @@ def _segment_tdo(candidate, scenario):
         "upload_delay_s": float(upload_time),
         "outage": float(outage_time / max(air_time, 1e-9)),
         "sector_diversity": _sector_entropy(candidate),
+        "upload_complete": bool(remaining <= 0.0),
     }
 
 
 def evaluate_segment(scenario, candidate, field, objective_spec):
-    """Authoritative per-segment metrics.
+    """Authoritative per-segment metrics (single source of truth).
 
-    ``feasible`` comes from the synchronous evaluator on a minimal single-UAV
-    plan that isolates the segment (the only payload-carrying edge), so the G2A
-    outage constraint and every other completion rule are enforced.  ``T/D/O``
-    come from the per-segment rules in :func:`_segment_tdo`.
+    ``feasible`` and T/D/O all come from the SAME segment-level slot-machine
+    rules (:func:`_segment_tdo`), restricted to the segment's own trace.  No
+    virtual depot/terminal edges are introduced, so the G2A outage is never
+    diluted by extra entry/exit slots, and the reported T/D/O are exactly the
+    values the feasibility check used.  A ``rankable=False`` candidate (a
+    relaxation reference, or a learned trajectory that never reached the target)
+    is infeasible.  ``field`` / ``objective_spec`` are accepted for caller
+    compatibility; the segment rules are self-contained on the candidate.
     """
-    from segment.stc.generators import generate_straight_hold
-
-    src, tgt = candidate.source, candidate.target
-    K = scenario.n_tasks
-    A = np.asarray(scenario.depot_m if src == -1
-                   else scenario.task_positions_m[src], dtype=float)
-    B = np.asarray(scenario.terminal_m if tgt == K
-                   else scenario.task_positions_m[tgt], dtype=float)
-    P = float(candidate.source_data_bits)
-
-    sc = STCScenario(
-        n_uav=1, n_tasks=2,
-        task_positions_m=(tuple(A), tuple(B)),
-        task_data_bits=(P, 0.0),
-        depot_m=tuple(A), terminal_m=tuple(B),
-        limits=scenario.limits, length_m=scenario.length_m,
-        width_m=scenario.width_m, n_bs=scenario.n_bs,
-        task_seed=scenario.task_seed, map_seed=scenario.map_seed)
-
-    d0 = generate_straight_hold(sc, field, -1, 0)   # depot(A) -> task0(A), zero length
-    seg = _relabel_candidate(candidate, 0, 1)       # task0(A) -> task1(B): the segment
-    d1 = generate_straight_hold(sc, field, 1, 2)    # task1(B) -> terminal(B), zero length
-    lib = {(-1, 0): (d0,), (0, 1): (seg,), (1, 2): (d1,)}
-    sol = PlanSolution(routes=((0, 1),),
-                       candidate_ids=((d0.candidate_id, seg.candidate_id,
-                                       d1.candidate_id),))
-
-    result = evaluate_solution(sc, lib, sol, field, objective_spec,
-                               keep_timelines=False)
     metrics = _segment_tdo(candidate, scenario)
-    metrics["feasible"] = bool(result.feasible)
+    if not candidate.rankable:
+        metrics["feasible"] = False
+        metrics["failure_reason"] = "non-rankable candidate (no arrival)"
+        return metrics
+    feasible = (metrics["upload_complete"]
+                and metrics["outage"] <= scenario.limits.eps_out)
+    metrics["feasible"] = bool(feasible)
+    metrics["failure_reason"] = (None if feasible
+                                 else ("upload incomplete"
+                                       if not metrics["upload_complete"]
+                                       else "route outage exceeds eps_out"))
     return metrics
 
 
@@ -397,11 +386,21 @@ def run_lifecycle(runner_name, cfg, run_id, matrix, per_scenario, summary_fn,
     completed = []
     start = _time.perf_counter()
     timeout = cfg.get("timeout_s")
+
+    def _check_timeout():
+        if timeout is not None and _time.perf_counter() - start > timeout:
+            raise TimeoutError("%s exceeded timeout %.0fs"
+                               % (runner_name, timeout))
+
+    def _persist_partial():
+        try:
+            rc.write_bytes(records_name, json_bytes(records_all))
+        except Exception:
+            pass
+
     try:
         for idx, key in enumerate(matrix):
-            if timeout is not None and _time.perf_counter() - start > timeout:
-                raise TimeoutError("%s exceeded timeout %.0fs"
-                                   % (runner_name, timeout))
+            _check_timeout()
             print("[%s] scenario %d/%d %s" % (runner_name, idx + 1, len(matrix),
                                               tuple(key)))
             records_all.extend(per_scenario(*key))
@@ -409,13 +408,17 @@ def run_lifecycle(runner_name, cfg, run_id, matrix, per_scenario, summary_fn,
             rc.write_bytes(records_name, json_bytes(records_all))
             rc.write_bytes("progress.json", json_bytes(
                 {"completed": completed, "total": len(matrix)}))
+            # an overrun during the LAST scenario must not seal success
+            _check_timeout()
+        _check_timeout()
         rc.write_bytes("summary.json", json_bytes(summary_fn(records_all)))
         rc.finalize("success")
+    except KeyboardInterrupt:
+        _persist_partial()
+        rc.finalize("failed")
+        raise
     except Exception:
-        try:
-            rc.write_bytes(records_name, json_bytes(records_all))
-        except Exception:
-            pass
+        _persist_partial()
         rc.finalize("failed")
         raise
     print("run written to %s (%d records)" % (rc.run_dir, len(records_all)))

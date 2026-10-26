@@ -17,14 +17,23 @@ from segment.stc.types import RadioSample
 SIR_THRESHOLD = 3.0  # must match radio_map_A2G.SIR_THRESHOLD
 
 
-def configure_radio_world(length_m, n_bs, map_seed):
-    """Configure both maps for a ``length_m`` x ``length_m`` region, return world hash."""
+def configure_radio_world(length_m, n_bs, map_seed, uplink_power_w=None):
+    """Configure both maps for a ``length_m`` x ``length_m`` region, return world hash.
+
+    ``uplink_power_w`` (Watt) is applied to the A2G uplink map so a scenario's
+    uplink power actually enters the radio propagation, and is folded into the
+    world hash so two otherwise-identical worlds differing only in uplink power
+    are not treated as interchangeable.
+    """
     d_km = float(length_m) / 1000.0
     radio_map_A2G.set_region(d_km, int(n_bs), int(map_seed))
     radio_map_G2A.set_region(d_km, int(n_bs), int(map_seed))
+    if uplink_power_w is not None:
+        radio_map_A2G.set_uplink_power(float(uplink_power_w))
     h = hashlib.sha256()
     h.update(np.ascontiguousarray(radio_map_A2G.HeightMapMatrix).tobytes())
     h.update(np.ascontiguousarray(radio_map_A2G.BS_loc).tobytes())
+    h.update(repr(float(radio_map_A2G.PB)).encode("utf-8"))
     return h.hexdigest()
 
 
@@ -36,7 +45,8 @@ class PerSectorRadioField:
         self.length_m = scenario.length_m
         self.width_m = scenario.width_m
         self.world_hash = configure_radio_world(
-            max(scenario.length_m, scenario.width_m), scenario.n_bs, scenario.map_seed)
+            max(scenario.length_m, scenario.width_m), scenario.n_bs, scenario.map_seed,
+            uplink_power_w=scenario.limits.uplink_power_w)
 
         xs = np.arange(0.0, scenario.length_m + 1e-9, spacing_m)
         ys = np.arange(0.0, scenario.width_m + 1e-9, spacing_m)

@@ -178,7 +178,8 @@ def _configure_maps(scenario):
     """Configure the legacy radio maps for the STC region; return the world hash."""
     from segment.stc.radio import configure_radio_world
     return configure_radio_world(max(scenario.length_m, scenario.width_m),
-                                 scenario.n_bs, scenario.map_seed)
+                                 scenario.n_bs, scenario.map_seed,
+                                 uplink_power_w=scenario.limits.uplink_power_w)
 
 
 def _jia_comm_matrix(scenario, task_ids, weights, seed):

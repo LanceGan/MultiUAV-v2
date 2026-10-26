@@ -80,6 +80,17 @@ def set_region(D_km, n_bs=4, map_seed=None):
     BS_loc = np.column_stack([_frac * D, np.full(n_bs, 0.025)])
 
 
+def set_uplink_power(pb):
+    """Set the UAV uplink transmit power ``PB`` (Watt) used in A2G propagation.
+
+    ``uplink_power_w`` from the STC scenario limits must actually reach the
+    A2G radio computation (``getLargeScalePowerFromBS`` scales the received
+    power by ``PB``), not merely be recorded as a config field.
+    """
+    global PB
+    PB = float(pb)
+
+
 set_region(4)  # 默认 4km×4km 区域（N=2）
     
 
