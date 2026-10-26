@@ -111,7 +111,8 @@ def _evaluate_generator(gen, scenario, field, spec, generator_config):
     return per_edge, n_candidates, time.perf_counter() - start
 
 
-def _aggregate(gen, per_edge, n_candidates, compute, common_edges, world_hash):
+def _aggregate(gen, per_edge, n_candidates, compute, common_edges, world_hash,
+               checkpoint_hash=None):
     edges = list(per_edge)
     feas = [per_edge[e]["feasible"] for e in edges]
     feasible_frac = float(np.mean(feas)) if feas else 0.0
@@ -140,6 +141,7 @@ def _aggregate(gen, per_edge, n_candidates, compute, common_edges, world_hash):
         "t_mean_s": t, "d_mean_s": d, "o_mean": o,
         "sector_diversity": div, "compute_time_s": float(compute),
         "world_hash": world_hash,
+        "checkpoint_hash": checkpoint_hash,
         "per_edge": per_edge_records,
         "common_feasible_edges": sorted([list(e) for e in common_edges]),
         "failure_reason": None,
@@ -205,7 +207,8 @@ def run_segment_gate(scenario, field, generator_config=None, drl_checkpoints=Non
         label = drl_generator_label("sac", sac_result.checkpoint_hash)
         per_edge, n_candidates, compute = evaluated[label]
         records.append(_aggregate(label, per_edge, n_candidates, compute, common,
-                                  field.world_hash))
+                                  field.world_hash,
+                                  checkpoint_hash=sac_result.checkpoint_hash))
     else:
         records.append(_unavailable_record("SAC", sac_result.reason))
 

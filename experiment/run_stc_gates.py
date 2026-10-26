@@ -44,6 +44,18 @@ PROPOSED_METHODS = ("proposed_stc_alns",)
 BASELINE_METHODS = tuple(m for m in SYSTEM_BASELINE_KEYS
                          if m not in PROPOSED_METHODS)
 
+# Registered RQ2 assignment / sequence method names (must match run_stc_main.run_rq2).
+ASSIGNMENT_METHODS = frozenset({
+    "region_partition", "spatial_kmeans", "shortest_balanced",
+    "jia_ebtas", "library_aware_ebtas",
+})
+SEQUENCE_METHODS = frozenset({
+    "distance_nn_2opt", "jia_time_energy_tsp", "ga_eqtsp_sequence",
+    "library_aware_sequence",
+})
+# RQ3 approximation modes reported by the evaluator audit.
+AUDIT_MODES = frozenset({"independent", "static_factor"})
+
 
 @dataclass
 class LoadedRun:
@@ -152,23 +164,57 @@ def _valid_sha256(value):
             and all(c in "0123456789abcdefABCDEF" for c in s))
 
 
-def _valid_rq2_record(r):
-    """An RQ2 record is valid evidence only with a method name and a finite
-    objective or makespan (an evaluated-but-metricless record is not evidence)."""
+def _valid_git_head(value):
+    """A real git head is a 40-char SHA-1 hex string (not an arbitrary label)."""
+    s = str(value)
+    return (len(s) == 40
+            and all(c in "0123456789abcdefABCDEF" for c in s))
+
+
+def _legal_edge_set(n_tasks):
+    """The exact ``K(K+1)`` legal directed edges of a K-task scenario."""
+    edges = {(-1, i) for i in range(n_tasks)}
+    for i in range(n_tasks):
+        for j in range(n_tasks):
+            if i != j:
+                edges.add((i, j))
+    for i in range(n_tasks):
+        edges.add((i, n_tasks))
+    return edges
+
+
+def _infer_n_tasks(n_edges):
+    """Infer K from ``n_edges == K(K+1)``; ``None`` when it is not of that form."""
+    disc = 1 + 4 * int(n_edges)
+    r = int(math.isqrt(disc))
+    if r * r != disc:
+        return None
+    k = (r - 1) // 2
+    return k if k * (k + 1) == int(n_edges) else None
+
+
+def _valid_rq2_record(r, layer):
+    """An RQ2 record is valid evidence only with a REGISTERED method name for its
+    layer and a finite objective/makespan (an evaluated-but-forged record is not
+    evidence)."""
+    known = ASSIGNMENT_METHODS if layer == "assignment" else SEQUENCE_METHODS
     return (isinstance(r, dict)
             and r.get("status") == "evaluated"
-            and isinstance(r.get("method"), str) and bool(r.get("method"))
+            and isinstance(r.get("method"), str) and r.get("method") in known
             and (_finite(r.get("objective")) or _finite(r.get("makespan_s"))))
 
 
 def _valid_metric_error(rec):
-    """An audit record is valid only if ``metric_error`` is a non-empty dict of
-    finite metric deviations (a NaN / non-dict ``metric_error`` is not evidence)."""
+    """An audit record is valid only if ``metric_error`` reports a known
+    approximation mode with finite metric deviations (NaN / forged modes are not
+    evidence)."""
     me = rec.get("metric_error")
     if not isinstance(me, dict) or not me:
         return False
-    for mode in me.values():
-        if isinstance(mode, dict) and any(_finite(v) for v in mode.values()):
+    for mode, metrics in me.items():
+        if mode not in AUDIT_MODES or not isinstance(metrics, dict):
+            continue
+        if any(_finite(v) for v in metrics.values()):
             return True
     return False
 
@@ -246,6 +292,10 @@ def evaluate_gate_1(segment_runs):
             evaluated[gen] = rec
 
     problems = []
+    # generator names must be registered (deterministic families or a drl: label)
+    for gen in evaluated:
+        if gen not in DETERMINISTIC_GENERATORS and not gen.startswith("drl:"):
+            problems.append("unknown generator %s" % gen)
     if "straight_hold" not in evaluated:
         problems.append("no straight_hold baseline evaluated")
     comm_aware = [g for g in evaluated if g != "straight_hold"]
@@ -253,15 +303,31 @@ def evaluate_gate_1(segment_runs):
         problems.append("no communication-aware generator evaluated")
 
     # the common-feasible edge IDs must be real (feasible in every generator's
-    # per-edge records), every generator must cover the full edge set, and every
-    # generator must declare the SAME intersection
+    # per-edge records), every generator must cover the full legal edge set (no
+    # self-loops / forged edges), and every generator must declare the SAME
+    # intersection
     common = None
     declared_sets = []
+    n_tasks = None
     for gen, rec in evaluated.items():
         per_edge = rec.get("per_edge") or []
         n_edges = rec.get("n_edges")
         if not per_edge or n_edges is None or len(per_edge) != n_edges:
             problems.append("generator %s per-edge coverage incomplete" % gen)
+            continue
+        k = _infer_n_tasks(n_edges)
+        if k is None:
+            problems.append("generator %s n_edges is not K(K+1)" % gen)
+            continue
+        if n_tasks is None:
+            n_tasks = k
+        elif n_tasks != k:
+            problems.append("generators disagree on the scenario size")
+        edge_ids = {tuple(pe["edge"]) for pe in per_edge
+                    if isinstance(pe, dict) and "edge" in pe}
+        if edge_ids != _legal_edge_set(k):
+            problems.append("generator %s per-edge set is not the legal edge set "
+                            "(self-loops / forged edges)" % gen)
             continue
         feasible_ids = {tuple(pe["edge"]) for pe in per_edge
                         if isinstance(pe, dict) and pe.get("feasible")}
@@ -296,8 +362,8 @@ def _rq2_valid(run):
             continue
         assign = entry.get("assignment") or []
         seq = entry.get("sequence") or []
-        if (any(_valid_rq2_record(r) for r in assign)
-                and any(_valid_rq2_record(r) for r in seq)):
+        if (any(_valid_rq2_record(r, "assignment") for r in assign)
+                and any(_valid_rq2_record(r, "sequence") for r in seq)):
             return True
     return False
 
@@ -334,11 +400,19 @@ def evaluate_gate_2(audit_runs, main_runs):
 
 
 def _is_proposed(rec):
-    return bool(rec.get("proposed")) or rec.get("method") in PROPOSED_METHODS
+    # only the registered proposed method key counts; a ``proposed=True`` flag on
+    # an arbitrary method is NOT evidence of the proposed method
+    return rec.get("method") in PROPOSED_METHODS
 
 
 def _scenario_key(rec):
     return (rec.get("uav_num"), rec.get("map_seed"), rec.get("task_seed"))
+
+
+def _method_key(rec):
+    """A (scenario, method_seed) pairing key: a contrast must share the seed."""
+    return (rec.get("uav_num"), rec.get("map_seed"), rec.get("task_seed"),
+            rec.get("method_seed"))
 
 
 def evaluate_gate_3(main_runs, ablation_runs):
@@ -358,19 +432,19 @@ def evaluate_gate_3(main_runs, ablation_runs):
     for run in main_runs:
         if not _ok(run):
             continue
-        by_scen = {}
+        by_key = {}
         for rec in (run.artifacts.get("raw_records.json") or []):
             if not isinstance(rec, dict) or rec.get("status") != "evaluated":
                 continue
             if not _finite(rec.get("objective")):
                 continue
-            d = by_scen.setdefault(_scenario_key(rec),
-                                   {"proposed": False, "baselines": set()})
+            d = by_key.setdefault(_method_key(rec),
+                                  {"proposed": False, "baselines": set()})
             if _is_proposed(rec):
                 d["proposed"] = True
             elif rec.get("method") in BASELINE_METHODS:
                 d["baselines"].add(rec.get("method"))
-        for d in by_scen.values():
+        for d in by_key.values():
             if d["proposed"] and len(d["baselines"]) >= 2:
                 contrast_valid = True
                 n_baselines = max(n_baselines, len(d["baselines"]))
@@ -417,9 +491,32 @@ def evaluate_gate_3(main_runs, ablation_runs):
     ])
 
 
-def evaluate_gate_4(all_runs):
+def _valid_reporting_bundle(path):
+    """Return ``True`` for a valid non-empty reporting bundle, ``False`` for an
+    invalid/empty one, ``None`` when absent."""
+    path = Path(path)
+    if not path.is_file():
+        return None
+    try:
+        bundle = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(bundle, dict):
+        return False
+    figures = bundle.get("figures")
+    if not isinstance(figures, dict) or not figures:
+        return False
+    for name, info in figures.items():
+        if not isinstance(info, dict) or not _valid_sha256(info.get("sha256")) \
+                or not isinstance(info.get("bytes"), int) or info["bytes"] <= 0:
+            return False
+    return True
+
+
+def evaluate_gate_4(all_runs, reporting_bundle_path=None):
     """Gate 4: provenance/reproduction — every run is sealed, hash-consistent,
-    and records a real git head and registered input hashes."""
+    records a real git head and registered input hashes, and (when a path is
+    given) the immutable reporting bundle exists and is valid."""
     if not all_runs:
         return _gate(NOT_RUN, "no runs found")
     invalid = [r for r in all_runs if not _ok(r)]
@@ -431,13 +528,13 @@ def evaluate_gate_4(all_runs):
     problems = []
     for run in all_runs:
         head = (run.manifest.get("git") or {}).get("head", "")
-        if not head or head == "unknown":
-            problems.append("%s: git head missing/unknown" % run.run_id)
+        if not _valid_git_head(head):
+            problems.append("%s: git head not a valid SHA-1 (got %r)"
+                            % (run.run_id, head))
         inputs = run.manifest.get("inputs") or {}
-        if not inputs or not any(str(v) for v in inputs.values()):
+        if not inputs:
             problems.append("%s: no registered input hashes" % run.run_id)
-        bad_inputs = [k for k, v in inputs.items()
-                      if v and not _valid_sha256(v)]
+        bad_inputs = [k for k, v in inputs.items() if not _valid_sha256(v)]
         if bad_inputs:
             problems.append("%s: invalid input hash (not SHA-256 hex): %s"
                             % (run.run_id, ", ".join(bad_inputs)))
@@ -447,8 +544,27 @@ def evaluate_gate_4(all_runs):
         hashes = run.manifest.get("hashes") or {}
         if not hashes:
             problems.append("%s: no artifact hashes recorded" % run.run_id)
+        # expected artifacts and recorded hashes must correspond exactly, so an
+        # unverifiable expected artifact (or a hash for a non-artifact) cannot
+        # slip through as "sealed"
+        missing = set(expected) - set(hashes)
+        extra = set(hashes) - set(expected)
+        if missing:
+            problems.append("%s: expected artifact(s) without a recorded hash: %s"
+                            % (run.run_id, ", ".join(sorted(missing))))
+        if extra:
+            problems.append("%s: recorded hash for a non-expected artifact: %s"
+                            % (run.run_id, ", ".join(sorted(extra))))
     if problems:
         return _gate(FAIL, "; ".join(problems))
+    if reporting_bundle_path is not None:
+        bundle_state = _valid_reporting_bundle(reporting_bundle_path)
+        if bundle_state is None:
+            return _gate(FAIL, "reporting bundle missing",
+                         [str(reporting_bundle_path)])
+        if bundle_state is False:
+            return _gate(FAIL, "reporting bundle invalid or empty",
+                         [str(reporting_bundle_path)])
     return _gate(PASS, "%d finalized run(s) with sealed provenance" % len(all_runs),
                  [r.run_id for r in all_runs])
 
@@ -457,7 +573,7 @@ def evaluate_gate_4(all_runs):
 # Report assembly
 # --------------------------------------------------------------------------- #
 
-def build_report(runs, tests_exit_code=None):
+def build_report(runs, tests_exit_code=None, reporting_bundle_path=None):
     """Assemble the machine-readable Gate 0-4 report from loaded runs."""
     grouped = classify(runs)
     gates = {
@@ -467,7 +583,7 @@ def build_report(runs, tests_exit_code=None):
             grouped.get("stc_evaluator_audit", []), grouped.get("stc_main", [])),
         "gate_3_proposed_ablation": evaluate_gate_3(
             grouped.get("stc_main", []), grouped.get("stc_ablation", [])),
-        "gate_4_provenance": evaluate_gate_4(runs),
+        "gate_4_provenance": evaluate_gate_4(runs, reporting_bundle_path),
     }
     statuses = [gates[name]["status"] for name in GATE_ORDER]
     if FAIL in statuses:
@@ -503,6 +619,8 @@ def main(argv=None):
                         help="extra pytest args for Gate 0 (space-separated)")
     parser.add_argument("--skip-tests", action="store_true",
                         help="do not run tests (Gate 0 = NOT_RUN)")
+    parser.add_argument("--reporting-bundle", default="results/figs/reporting_bundle.json",
+                        help="path to the immutable reporting bundle (Gate 4)")
     args = parser.parse_args(argv)
 
     tests_exit_code = None
@@ -513,7 +631,8 @@ def main(argv=None):
         tests_exit_code = _run_tests(pytest_args)
 
     runs = scan_runs(args.runs_dir)
-    report = build_report(runs, tests_exit_code=tests_exit_code)
+    report = build_report(runs, tests_exit_code=tests_exit_code,
+                          reporting_bundle_path=args.reporting_bundle)
     payload = json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False)
     if args.report:
         Path(args.report).write_text(payload, encoding="utf-8")

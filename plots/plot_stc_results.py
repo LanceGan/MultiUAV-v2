@@ -101,8 +101,12 @@ def check_same_source(runs):
 
 
 def _hierarchical_mean(records, value_fn):
-    """Mean across method seeds within a scenario, then mean across scenarios."""
+    """Mean across method seeds within a scenario, then mean across the COMMON
+    scenarios (only scenarios where every method has a value), so methods are
+    compared on identical scenario sets — never flat-averaged over different
+    scenario sets."""
     by_scen = {}
+    methods = set()
     for r in records:
         if not isinstance(r, dict) or r.get("status") != "evaluated":
             continue
@@ -110,16 +114,27 @@ def _hierarchical_mean(records, value_fn):
         v = value_fn(r)
         if v is None:
             continue
-        by_scen.setdefault((scen, r.get("method")), []).append(v)
-    method_means = {}
-    for (_scen, m), vals in by_scen.items():
-        method_means.setdefault(m, []).append(sum(vals) / len(vals))
-    return {m: sum(vs) / len(vs) for m, vs in method_means.items()}
+        m = r.get("method")
+        by_scen.setdefault((scen, m), []).append(v)
+        methods.add(m)
+    scen_means = {}
+    for (scen, m), vals in by_scen.items():
+        scen_means.setdefault(scen, {})[m] = sum(vals) / len(vals)
+    common = [s for s, mm in scen_means.items() if set(mm) >= methods]
+    out = {}
+    for m in methods:
+        vals = [scen_means[s][m] for s in common if m in scen_means[s]]
+        if vals:
+            out[m] = sum(vals) / len(vals)
+    return out
 
 
 def extract_td_points(records):
-    """Per-method normalized (T/T_ref, D/D_ref), hierarchically aggregated."""
+    """Per-method normalized (T/T_ref, D/D_ref), aggregated over the
+    common-feasible scenario set (only scenarios feasible for EVERY method), so
+    methods are never compared on scenarios where some are infeasible."""
     by_scen = {}
+    methods = set()
     for r in records:
         if not isinstance(r, dict) or r.get("status") != "evaluated":
             continue
@@ -135,8 +150,17 @@ def extract_td_points(records):
         if float(t_ref) <= 0 or float(d_ref) <= 0:
             continue
         scen = (r.get("uav_num"), r.get("map_seed"), r.get("task_seed"))
-        by_scen.setdefault((scen, r.get("method")), []).append(
+        m = r.get("method")
+        by_scen.setdefault((scen, m), []).append(
             (float(ms) / float(t_ref), float(td) / float(d_ref)))
+        methods.add(m)
+
+    scen_means = {}
+    for (scen, m), pts in by_scen.items():
+        scen_means.setdefault(scen, {})[m] = (
+            sum(p[0] for p in pts) / len(pts),
+            sum(p[1] for p in pts) / len(pts))
+    common = [s for s, mm in scen_means.items() if set(mm) >= methods]
 
     labels, proposed = {}, {}
     for r in records:
@@ -145,15 +169,16 @@ def extract_td_points(records):
             labels[r["method"]] = r.get("label")
             proposed[r["method"]] = bool(r.get("proposed"))
 
-    method_means = {}
-    for (_scen, m), pts in by_scen.items():
-        method_means.setdefault(m, []).append(
-            (sum(p[0] for p in pts) / len(pts),
-             sum(p[1] for p in pts) / len(pts)))
-    return [{"method": m, "label": labels.get(m), "proposed": proposed.get(m, False),
-             "t_norm": sum(p[0] for p in pts) / len(pts),
-             "d_norm": sum(p[1] for p in pts) / len(pts)}
-            for m, pts in method_means.items()]
+    out = []
+    for m in methods:
+        pts = [scen_means[s][m] for s in common if m in scen_means[s]]
+        if not pts:
+            continue
+        out.append({"method": m, "label": labels.get(m),
+                    "proposed": proposed.get(m, False),
+                    "t_norm": sum(p[0] for p in pts) / len(pts),
+                    "d_norm": sum(p[1] for p in pts) / len(pts)})
+    return out
 
 
 def extract_feasibility(records):
@@ -451,9 +476,14 @@ def _write_reporting_bundle(out_dir, written, provenance):
     """Write an immutable content-addressed reporting bundle.
 
     Records every figure's SHA-256 and byte length plus the provenance JSON's
-    hash, so any tampering with the figure bundle is detectable.
+    hash, so any tampering with the figure bundle is detectable.  The bundle is
+    write-once (an existing bundle is never silently overwritten) and an empty
+    bundle (no figures rendered) is refused.
     """
     import hashlib
+    if not written:
+        raise ValueError("refusing to write an empty reporting bundle "
+                         "(no figures were rendered)")
     prov_path = out_dir / "figures_provenance.json"
     prov_path.write_text(json.dumps(provenance, indent=2, sort_keys=True),
                          encoding="utf-8")
@@ -468,9 +498,14 @@ def _write_reporting_bundle(out_dir, written, provenance):
             "sha256": hashlib.sha256(data).hexdigest(),
             "bytes": len(data),
         }
-    (out_dir / "reporting_bundle.json").write_text(
-        json.dumps(bundle, indent=2, sort_keys=True), encoding="utf-8")
-    return out_dir / "reporting_bundle.json"
+    bundle_path = out_dir / "reporting_bundle.json"
+    if bundle_path.exists():
+        raise FileExistsError(
+            "reporting bundle already exists and is immutable "
+            "(delete it to regenerate): %s" % bundle_path)
+    bundle_path.write_text(json.dumps(bundle, indent=2, sort_keys=True),
+                           encoding="utf-8")
+    return bundle_path
 
 
 def load_valid_runs(run_paths):

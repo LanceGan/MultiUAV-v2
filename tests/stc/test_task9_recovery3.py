@@ -126,6 +126,7 @@ def test_segment_gate_per_edge_has_identity():
         if rec["status"] != "evaluated":
             continue
         assert "world_hash" in rec
+        assert "checkpoint_hash" in rec
         for pe in rec["per_edge"]:
             assert "candidate_id" in pe
             assert pe["trajectory_hash"]

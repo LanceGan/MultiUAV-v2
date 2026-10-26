@@ -24,7 +24,7 @@ def _sha256(data):
 
 
 def _write_run(root, run_id, experiment, artifacts, status="success",
-               git_head="abc123", inputs=None, hashes=None, expected=None):
+               git_head="a" * 40, inputs=None, hashes=None, expected=None):
     run_dir = Path(root) / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     written = {}
@@ -46,7 +46,7 @@ def _write_run(root, run_id, experiment, artifacts, status="success",
     return run_dir
 
 
-_EDGES = [[-1, 0], [0, 1], [1, 2], [2, 3]]
+_EDGES = [[-1, 0], [-1, 1], [0, 1], [1, 0], [0, 2], [1, 2]]  # K=2 legal set
 
 
 def _segment_record(generator, status="evaluated", feasible_frac=0.9,
