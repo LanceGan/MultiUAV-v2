@@ -27,6 +27,7 @@ from experiment.stc_common import (
     add_common_args,
     json_bytes,
     resolve_runner_config,
+    run_lifecycle,
     seg_view,
     small_scenario,
 )
@@ -145,7 +146,6 @@ def run_ablation(scenario, field, library, seed=42, iterations=1000,
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_args(parser)
-    parser.add_argument("--smoke-tasks", type=int, default=None)
     args = parser.parse_args(argv)
     try:
         cfg = resolve_runner_config(args, DEFAULT_CONFIG)
@@ -156,8 +156,7 @@ def main(argv=None):
         print("RQ5 ablation: mechanisms=%s" % (["full"] + list(ABLATIONS)))
         return 0
 
-    records_all = []
-    for uav_num, map_seed, task_seed in _matrix(cfg):
+    def per_scenario(uav_num, map_seed, task_seed):
         base = load_stc_scenario(uav_num, task_seed=task_seed, map_seed=map_seed)
         sc = small_scenario(base, cfg["smoke_tasks"]) if cfg["smoke"] else base
         field = PerSectorRadioField.from_scenario(sc, spacing_m=cfg["spacing_m"])
@@ -166,24 +165,14 @@ def main(argv=None):
         out = run_ablation(sc, field, library.candidates, seed=task_seed,
                            iterations=cfg["iterations"],
                            solver_config=cfg["solver"])
-        for r in out["records"]:
-            r = dict(r)
-            r.update({"uav_num": uav_num, "map_seed": map_seed,
-                      "task_seed": task_seed})
-            records_all.append(r)
+        return [{**r, "uav_num": uav_num, "map_seed": map_seed,
+                 "task_seed": task_seed} for r in out["records"]]
 
-    rc = RunContext.create("results/runs", "stc_ablation", cfg,
-                           run_id=args.run_id, expected=EXPECTED_ARTIFACTS)
-    rc.register_input("resolved_config", data=json_bytes(cfg))
-    summary = {"record_count": len(records_all),
-               "n_ablations": len(ABLATIONS)}
-    for name, value in (("resolved_config.json", cfg),
-                        ("records.json", records_all),
-                        ("summary.json", summary)):
-        rc.write_bytes(name, json_bytes(value))
-    rc.finalize("success")
-    print("run written to %s (%d records)" % (rc.run_dir, len(records_all)))
-    return 0
+    def summary_fn(records_all):
+        return {"record_count": len(records_all), "n_ablations": len(ABLATIONS)}
+
+    return run_lifecycle("stc_ablation", cfg, args.run_id, _matrix(cfg),
+                         per_scenario, summary_fn)
 
 
 def _matrix(cfg):

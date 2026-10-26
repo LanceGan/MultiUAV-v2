@@ -1,12 +1,16 @@
-"""RQ1: pairwise single-segment method gate (Task 9 Step 1).
+"""RQ1: pairwise single-segment method gate (Task 9 Step 1 + recovery).
 
 Compares Straight-Hold, Comm-Waypoint, state-expanded graph (A*), SLSQP
 refinement, and the learned baselines (TD3 / DDPG / SAC) on IDENTICAL directed
-edges.  Reports full-set feasibility, common-feasible paired T/D/O, sector
-diversity, and compute time.  Learned baselines use real checkpoint-bound
-trajectories only (the SAC production path is validated in
-``segment.stc.sac_candidates``); a missing/incompatible checkpoint is recorded
-as an explicit ``unavailable``, never a fabricated candidate.
+edges.  Segment feasibility is authoritative (see
+:func:`experiment.stc_common.evaluate_segment`): the G2A outage constraint,
+reliable-then-rate sector selection, slot upload, and every completion rule are
+enforced by the synchronous evaluator on a minimal isolating plan.
+
+T/D/O are averaged over the *common-feasible* edge subset only; feasibility is
+reported over the full edge set.  Learned baselines use real checkpoint-bound
+trajectories only; a missing/incompatible checkpoint is an explicit
+``unavailable``, never a fabricated candidate.
 """
 
 import argparse
@@ -20,12 +24,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from experiment.stc_common import (
     add_common_args,
+    evaluate_segment,
     json_bytes,
     legal_edges,
     resolve_runner_config,
-    segment_metrics,
+    run_lifecycle,
     small_scenario,
 )
+from segment.stc.evaluator import default_objective_spec
 from segment.stc.generators import (
     drl_generator_label,
     generate_comm_waypoints,
@@ -83,105 +89,118 @@ def _generate_one(generator, scenario, field, source, target, generator_config):
     raise ValueError("unknown generator %r" % generator)
 
 
-def _deterministic_records(scenario, field, generator_config):
-    dt = scenario.limits.delta_t_s
+def _reference_spec(scenario, field):
+    """A valid ObjectiveSpec over a straight-hold library (references only; the
+    reference values do not affect per-segment feasibility)."""
+    lib = {}
+    for (src, tgt) in legal_edges(scenario.n_tasks):
+        lib[(src, tgt)] = (generate_straight_hold(scenario, field, src, tgt),)
+    return default_objective_spec(scenario, lib)
+
+
+def _evaluate_generator(gen, scenario, field, spec, generator_config):
     edges = legal_edges(scenario.n_tasks)
-    records = []
-    for gen in DETERMINISTIC_GENERATORS:
-        start = time.perf_counter()
-        best_metrics = []
-        n_candidates = 0
-        for (src, tgt) in edges:
-            cands = _generate_one(gen, scenario, field, src, tgt,
-                                  generator_config)
-            n_candidates += len(cands)
-            best = min(cands, key=lambda c: candidate_cost(c, dt))
-            best_metrics.append(segment_metrics(best, scenario))
-        compute = time.perf_counter() - start
-        records.append(_aggregate(gen, "evaluated", edges, best_metrics,
-                                  n_candidates, compute, None))
-    return records
+    per_edge = {}
+    n_candidates = 0
+    start = time.perf_counter()
+    for (src, tgt) in edges:
+        cands = _generate_one(gen, scenario, field, src, tgt, generator_config)
+        n_candidates += len(cands)
+        best = min(cands, key=lambda c: candidate_cost(c, scenario.limits.delta_t_s))
+        per_edge[(src, tgt)] = evaluate_segment(scenario, best, field, spec)
+    return per_edge, n_candidates, time.perf_counter() - start
 
 
-def _aggregate(generator, status, edges, best_metrics, n_candidates, compute,
-               failure_reason):
-    arr = np.asarray([[m["flight_time_s"], m["upload_delay_s"], m["outage"],
-                       m["sector_diversity"], float(m["feasible"])]
-                      for m in best_metrics])
+def _aggregate(gen, per_edge, n_candidates, compute, common_edges):
+    edges = list(per_edge)
+    feas = [per_edge[e]["feasible"] for e in edges]
+    feasible_frac = float(np.mean(feas)) if feas else 0.0
+    div = float(np.mean([per_edge[e]["sector_diversity"] for e in edges])) \
+        if edges else 0.0
+    cf = [per_edge[e] for e in edges if e in common_edges]
+    t = float(np.mean([m["flight_time_s"] for m in cf])) if cf else None
+    d = float(np.mean([m["upload_delay_s"] for m in cf])) if cf else None
+    o = float(np.mean([m["outage"] for m in cf])) if cf else None
     return {
-        "generator": generator,
-        "status": status,
-        "n_edges": len(edges),
-        "n_candidates": int(n_candidates),
-        "feasible_frac": float(np.mean(arr[:, 4])) if len(arr) else 0.0,
-        "t_mean_s": float(np.mean(arr[:, 0])) if len(arr) else 0.0,
-        "d_mean_s": float(np.mean(arr[:, 1])) if len(arr) else 0.0,
-        "o_mean": float(np.mean(arr[:, 2])) if len(arr) else 0.0,
-        "sector_diversity": float(np.mean(arr[:, 3])) if len(arr) else 0.0,
-        "compute_time_s": float(compute),
-        "failure_reason": failure_reason,
+        "generator": gen, "status": "evaluated",
+        "n_edges": len(edges), "n_candidates": int(n_candidates),
+        "feasible_frac": feasible_frac, "common_feasible_n": len(cf),
+        "t_mean_s": t, "d_mean_s": d, "o_mean": o,
+        "sector_diversity": div, "compute_time_s": float(compute),
+        "failure_reason": None,
     }
+
+
+def _unavailable_record(gen, reason):
+    return {"generator": gen, "status": "unavailable", "n_edges": 0,
+            "n_candidates": 0, "feasible_frac": None, "common_feasible_n": None,
+            "t_mean_s": None, "d_mean_s": None, "o_mean": None,
+            "sector_diversity": None, "compute_time_s": None,
+            "failure_reason": reason}
 
 
 def run_segment_gate(scenario, field, generator_config=None, drl_checkpoints=None):
     """Run the RQ1 pairwise segment gate and return ``{"records", "summary"}``.
 
-    ``drl_checkpoints`` maps a model name (TD3/DDPG/SAC) to a checkpoint path
-    (``None`` = unavailable).  Deterministic generators are always evaluated;
-    SAC is produced only from a validated SI checkpoint (see
-    :func:`segment.stc.sac_candidates.produce_sac_segment_candidates`); TD3 and
-    DDPG record an explicit ``unavailable`` (no compatible production path).
+    Deterministic generators are always evaluated; SAC is produced only from a
+    validated SI checkpoint; TD3/DDPG record an explicit ``unavailable`` (no
+    compatible production path).
     """
     drl_checkpoints = dict(drl_checkpoints or {})
     generator_config = generator_config or DEFAULT_GATE_CONFIG
-    records = _deterministic_records(scenario, field, generator_config)
+    spec = _reference_spec(scenario, field)
+    edges = legal_edges(scenario.n_tasks)
 
-    sac_result = produce_sac_segment_candidates(
-        drl_checkpoints.get("SAC"), scenario, field)
+    evaluated = {}
+    for gen in DETERMINISTIC_GENERATORS:
+        per_edge, n_candidates, compute = _evaluate_generator(
+            gen, scenario, field, spec, generator_config)
+        evaluated[gen] = (per_edge, n_candidates, compute)
+
+    # SAC timing includes checkpoint load + policy rollout (recovery #5)
+    sac_start = time.perf_counter()
+    sac_result = produce_sac_segment_candidates(drl_checkpoints.get("SAC"),
+                                                scenario, field)
+    sac_per_edge = {}
+    sac_n_candidates = 0
     if sac_result.status == "available":
-        edges = legal_edges(scenario.n_tasks)
-        best_metrics = []
-        n_candidates = 0
-        start = time.perf_counter()
         for (src, tgt) in edges:
             cands = sac_result.candidates[(src, tgt)]
-            n_candidates += len(cands)
+            sac_n_candidates += len(cands)
             best = min(cands, key=lambda c: candidate_cost(
                 c, scenario.limits.delta_t_s))
-            best_metrics.append(segment_metrics(best, scenario))
-        compute = time.perf_counter() - start
-        records.append(_aggregate(
-            drl_generator_label("sac", sac_result.checkpoint_hash), "evaluated",
-            edges, best_metrics, n_candidates, compute, None))
+            sac_per_edge[(src, tgt)] = evaluate_segment(scenario, best, field, spec)
+        evaluated[drl_generator_label("sac", sac_result.checkpoint_hash)] = (
+            sac_per_edge, sac_n_candidates, time.perf_counter() - sac_start)
+
+    # common-feasible edge intersection across every evaluated generator
+    common = None
+    for gen, (per_edge, _n, _c) in evaluated.items():
+        feasible_edges = {e for e, m in per_edge.items() if m["feasible"]}
+        common = feasible_edges if common is None else (common & feasible_edges)
+    common = common or set()
+
+    records = []
+    for gen in DETERMINISTIC_GENERATORS:
+        per_edge, n_candidates, compute = evaluated[gen]
+        records.append(_aggregate(gen, per_edge, n_candidates, compute, common))
+
+    if sac_result.status == "available":
+        label = drl_generator_label("sac", sac_result.checkpoint_hash)
+        per_edge, n_candidates, compute = evaluated[label]
+        records.append(_aggregate(label, per_edge, n_candidates, compute, common))
     else:
-        records.append({"generator": "SAC", "status": "unavailable",
-                        "n_edges": 0, "n_candidates": 0, "feasible_frac": None,
-                        "t_mean_s": None, "d_mean_s": None, "o_mean": None,
-                        "sector_diversity": None, "compute_time_s": None,
-                        "failure_reason": sac_result.reason})
+        records.append(_unavailable_record("SAC", sac_result.reason))
 
     for model in ("TD3", "DDPG"):
-        cp = drl_checkpoints.get(model)
-        if cp:
-            records.append({"generator": model, "status": "unavailable",
-                            "n_edges": 0, "n_candidates": 0,
-                            "feasible_frac": None, "t_mean_s": None,
-                            "d_mean_s": None, "o_mean": None,
-                            "sector_diversity": None, "compute_time_s": None,
-                            "failure_reason":
-                                "%s checkpoint production is not available" % model})
-        else:
-            records.append({"generator": model, "status": "unavailable",
-                            "n_edges": 0, "n_candidates": 0,
-                            "feasible_frac": None, "t_mean_s": None,
-                            "d_mean_s": None, "o_mean": None,
-                            "sector_diversity": None, "compute_time_s": None,
-                            "failure_reason":
-                                "%s checkpoint is not configured (no path)" % model})
+        records.append(_unavailable_record(
+            model, "%s checkpoint production is not available" % model))
 
     summary = {
         "n_methods": len(records),
-        "n_edges": len(legal_edges(scenario.n_tasks)),
+        "n_edges": len(edges),
+        "common_feasible_n": len(common),
+        "common_feasible_edges": sorted([list(e) for e in common]),
         "evaluated": sorted(r["generator"] for r in records
                             if r["status"] == "evaluated"),
         "unavailable": sorted(r["generator"] for r in records
@@ -194,45 +213,37 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_args(parser)
     parser.add_argument("--sac-checkpoint", default=None)
-    parser.add_argument("--smoke-tasks", type=int, default=None)
     args = parser.parse_args(argv)
     try:
         cfg = resolve_runner_config(args, DEFAULT_CONFIG)
     except (OSError, ValueError, TypeError) as exc:
         parser.error(str(exc))
 
+    if args.sac_checkpoint is not None:
+        cfg["drl_checkpoints"] = dict(cfg["drl_checkpoints"])
+        cfg["drl_checkpoints"]["SAC"] = args.sac_checkpoint
+
     if args.dry_run:
         print("RQ1 segment gate matrix: generators=%s drl=%s" % (
             list(DETERMINISTIC_GENERATORS), sorted(DRL_MODELS)))
         return 0
 
-    from segment.stc.run_context import RunContext
-    records_all = []
-    for uav_num, map_seed, task_seed in _matrix(cfg):
+    def per_scenario(uav_num, map_seed, task_seed):
         base = load_stc_scenario(uav_num, task_seed=task_seed, map_seed=map_seed)
         sc = small_scenario(base, cfg["smoke_tasks"]) if cfg["smoke"] else base
         field = PerSectorRadioField.from_scenario(sc, spacing_m=cfg["spacing_m"])
         out = run_segment_gate(sc, field,
                                generator_config=cfg["generator_config"],
                                drl_checkpoints=cfg["drl_checkpoints"])
-        for r in out["records"]:
-            r = dict(r)
-            r.update({"uav_num": uav_num, "map_seed": map_seed,
-                      "task_seed": task_seed})
-            records_all.append(r)
+        return [{**r, "uav_num": uav_num, "map_seed": map_seed,
+                 "task_seed": task_seed} for r in out["records"]]
 
-    rc = RunContext.create("results/runs", "stc_segment_gate", cfg,
-                           run_id=args.run_id, expected=EXPECTED_ARTIFACTS)
-    rc.register_input("resolved_config", data=json_bytes(cfg))
-    summary = {"record_count": len(records_all),
-               "n_methods": len(DETERMINISTIC_GENERATORS) + len(DRL_MODELS)}
-    for name, value in (("resolved_config.json", cfg),
-                        ("records.json", records_all),
-                        ("summary.json", summary)):
-        rc.write_bytes(name, json_bytes(value))
-    rc.finalize("success")
-    print("run written to %s (%d records)" % (rc.run_dir, len(records_all)))
-    return 0
+    def summary_fn(records_all):
+        return {"record_count": len(records_all),
+                "n_methods": len(DETERMINISTIC_GENERATORS) + len(DRL_MODELS)}
+
+    return run_lifecycle("stc_segment_gate", cfg, args.run_id, _matrix(cfg),
+                         per_scenario, summary_fn)
 
 
 def _matrix(cfg):

@@ -27,6 +27,7 @@ from experiment.stc_common import (
     evaluate_synchronous,
     json_bytes,
     resolve_runner_config,
+    run_lifecycle,
     small_scenario,
 )
 from segment.stc.evaluator import default_objective_spec
@@ -110,8 +111,10 @@ def run_evaluator_audit(scenario, library, field, plans, objective_spec=None,
 
 
 def _audit_plans(scenario, library, field, seed):
+    from experiment.stc_common import seg_view
+    lib_view = seg_view(library, scenario, field)
     plans = [build_initial_solution(scenario, library, seed),
-             build_ebtas_initial_solution(scenario, library, seed)]
+             build_ebtas_initial_solution(scenario, lib_view, seed)]
     try:
         from segment.stc.system_baselines import run_system_baseline
         for method in ("region_distance_straight", "library_open_loop"):
@@ -126,7 +129,6 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_args(parser)
     parser.add_argument("--congestion-factor", type=float, default=None)
-    parser.add_argument("--smoke-tasks", type=int, default=None)
     args = parser.parse_args(argv)
     try:
         cfg = resolve_runner_config(args, DEFAULT_CONFIG)
@@ -140,8 +142,7 @@ def main(argv=None):
             list(APPROX_MODES), cfg["congestion_factor"]))
         return 0
 
-    records = []
-    for uav_num, map_seed, task_seed in _matrix(cfg):
+    def per_scenario(uav_num, map_seed, task_seed):
         base = load_stc_scenario(uav_num, task_seed=task_seed, map_seed=map_seed)
         sc = small_scenario(base, cfg["smoke_tasks"]) if cfg["smoke"] else base
         field = PerSectorRadioField.from_scenario(sc, spacing_m=cfg["spacing_m"])
@@ -151,24 +152,17 @@ def main(argv=None):
         plans = _audit_plans(sc, library.candidates, field, map_seed)
         out = run_evaluator_audit(sc, library.candidates, field, plans, spec,
                                   cfg["congestion_factor"])
-        records.append({"uav_num": uav_num, "map_seed": map_seed,
-                        "task_seed": task_seed,
-                        "n_plans": len(out["plans"]),
-                        "metric_error": out["metric_error"],
-                        "feasibility_reversal": out["feasibility_reversal"],
-                        "ranking_reversal": out["ranking_reversal"]})
+        return [{"uav_num": uav_num, "map_seed": map_seed, "task_seed": task_seed,
+                 "n_plans": len(out["plans"]),
+                 "metric_error": out["metric_error"],
+                 "feasibility_reversal": out["feasibility_reversal"],
+                 "ranking_reversal": out["ranking_reversal"]}]
 
-    rc = RunContext.create("results/runs", "stc_evaluator_audit", cfg,
-                           run_id=args.run_id, expected=EXPECTED_ARTIFACTS)
-    rc.register_input("resolved_config", data=json_bytes(cfg))
-    summary = {"record_count": len(records)}
-    for name, value in (("resolved_config.json", cfg),
-                        ("records.json", records),
-                        ("summary.json", summary)):
-        rc.write_bytes(name, json_bytes(value))
-    rc.finalize("success")
-    print("run written to %s (%d records)" % (rc.run_dir, len(records)))
-    return 0
+    def summary_fn(records_all):
+        return {"record_count": len(records_all)}
+
+    return run_lifecycle("stc_evaluator_audit", cfg, args.run_id, _matrix(cfg),
+                         per_scenario, summary_fn)
 
 
 def _matrix(cfg):

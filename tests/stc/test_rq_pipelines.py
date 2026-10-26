@@ -72,6 +72,21 @@ def _fast_radio(monkeypatch):
                         lambda loc: ([0.1], [10.0]))
 
 
+@pytest.fixture(autouse=True)
+def _goal_seeking_sac(monkeypatch):
+    # The SI SAC checkpoint saved in tests is randomly initialised, so its raw
+    # rollouts do not reach the target.  Make the policy deterministically fly
+    # toward the goal (state[2]/state[3] are the goal-direction features) so the
+    # "available" path exercises a genuinely-arriving trajectory, not a teleport.
+    from segment import sac
+
+    def select_action(self, state):
+        theta = math.atan2(float(state[3]), float(state[2])) % (2.0 * math.pi)
+        return np.array([50.0, theta], dtype=np.float32)
+
+    monkeypatch.setattr(sac.SAC, "select_action", select_action)
+
+
 # --------------------------------------------------------------------------- #
 # SAC candidate production / loading
 # --------------------------------------------------------------------------- #

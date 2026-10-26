@@ -244,6 +244,33 @@ def spatial_kmeans(scenario, seed=42):
     })
 
 
+def shortest_balanced(scenario, seed=42):
+    """Balanced assignment by shortest distance to depot-proximal anchors.
+
+    Seeds ``min(U, K)`` anchors at the tasks closest to the depot, then assigns
+    every task to its nearest anchor with capacity-balanced post-processing
+    (equal cluster sizes up to one).  Distinct from ``spatial_kmeans``: no
+    centroid iteration, anchors are fixed to the depot-proximal tasks.
+    """
+    pts = np.asarray(scenario.task_positions_m, dtype=float)
+    depot = np.asarray(scenario.depot_m, dtype=float)
+    n_uav = scenario.n_uav
+    n_tasks = scenario.n_tasks
+    dist_depot = np.linalg.norm(pts - depot, axis=1)
+    anchor_idx = list(np.argsort(dist_depot, kind="stable")[:min(n_uav, n_tasks)])
+    anchors = pts[anchor_idx]
+    dist_sq = _euclidean_dist_sq(pts, anchors)
+    labels = _balanced_assignment(dist_sq, n_uav)
+    return _finalize(scenario, labels, {
+        "method": "shortest_balanced",
+        "seed": int(seed),
+        "features": ("distance_to_anchor",),
+        "anchors": anchor_idx,
+        "n_tasks": n_tasks,
+        "n_uav": n_uav,
+    })
+
+
 def jia_ebtas(scenario, field=None, seed=42, weights=None):
     """Jia-2025 lineage balanced feature assignment (adapter of ``jia_balanced``).
 

@@ -184,10 +184,20 @@ def _rollout_drl_candidate(scenario, field, policy, source, target, data_bits,
         if done:
             break
     positions = list(env.positions)
-    positions[-1] = _node_pos(scenario, target).copy()  # snap the anchor to target
+    goal = _node_pos(scenario, target)
+    arrived = (float(np.linalg.norm(np.asarray(positions[-1]) - goal))
+               <= scenario.limits.arrive_radius_m)
+    if arrived:
+        # legitimate anchor snap within the arrival radius (the service point)
+        positions[-1] = goal.copy()
+        rankable = True
+    else:
+        # policy terminated by timeout without reaching the target: the trace is
+        # honest (no teleport) and the candidate is NOT a selectable arrival
+        rankable = False
     hold = tuple(positions[-2]) if len(positions) >= 2 else tuple(positions[0])
     return _build_candidate(scenario, field, source, target, generator,
-                            positions, hold, data_bits, True,
+                            positions, hold, data_bits, rankable,
                             candidate_id="sac_%d_%d" % (source, target))
 
 

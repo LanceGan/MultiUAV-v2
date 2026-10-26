@@ -54,7 +54,7 @@ DEFAULT_CONFIG = {
     "score": {"new_best": 3., "improve": 1., "accept": .5, "reject": 0.},
 }
 EXPECTED_ARTIFACTS = ("resolved_config.json", "raw_records.json", "solutions.json",
-                      "timelines.json", "summary.json")
+                      "timelines.json", "summary.json", "rq2.json")
 
 
 def _common_args(parser):
@@ -262,7 +262,12 @@ def _result_payload(r, scenario):
     }
 
 
-def _run_scenario(uav_num, map_seed, task_seed, cfg, rc):
+def _build_context(uav_num, map_seed, task_seed, cfg):
+    """Build the shared scenario/field/library/reference for one scenario.
+
+    RQ4 and RQ2 both consume this same context, so the field and library are
+    constructed exactly once per scenario (no duplicate radio-field build).
+    """
     base = load_stc_scenario(uav_num, task_seed=task_seed, map_seed=map_seed)
     sc = _small_scenario(base, cfg["smoke_tasks"]) if cfg["smoke"] else base
     field = PerSectorRadioField.from_scenario(sc, spacing_m=cfg["spacing_m"])
@@ -275,6 +280,11 @@ def _run_scenario(uav_num, map_seed, task_seed, cfg, rc):
                                       generator_config=cfg["generator_config"],
                                       drl_candidates=drl_candidates)
     reference = default_objective_spec(sc, library.candidates)
+    return sc, field, library, reference, sac_result
+
+
+def _run_scenario(sc, field, library, reference, sac_result,
+                  uav_num, map_seed, task_seed, cfg, rc):
     prefix = "%d_%d_%d" % (uav_num, map_seed, task_seed)
     inputs = {}
     for kind, data in (
@@ -353,6 +363,7 @@ def run_rq2(scenario, field, library, objective_spec, seed=42):
         jia_ebtas,
         library_aware_ebtas,
         region_partition,
+        shortest_balanced,
         spatial_kmeans,
     )
     from segment.stc.sequencing import (
@@ -403,6 +414,7 @@ def run_rq2(scenario, field, library, objective_spec, seed=42):
     assign_methods = {
         "region_partition": lambda: region_partition(scenario, seed=seed),
         "spatial_kmeans": lambda: spatial_kmeans(scenario, seed=seed),
+        "shortest_balanced": lambda: shortest_balanced(scenario, seed=seed),
         "jia_ebtas": lambda: jia_ebtas(scenario, field=field, seed=seed),
         "library_aware_ebtas": lambda: library_aware_ebtas(scenario, seg, seed=seed),
     }
@@ -471,13 +483,25 @@ def main(argv=None):
         rc.register_input("checkpoint_sac", path=cfg["sac_checkpoint"])
     records, solutions, timelines = [], [], []
     try:
+        rq2_records = []
         for uav_num, map_seed, task_seed in itertools.product(
                 cfg["uav_nums"], cfg["map_seeds"], cfg["task_seeds"]):
-            raw, sol, trace = _run_scenario(uav_num, map_seed, task_seed, cfg, rc)
+            sc, field, library, reference, sac_result = _build_context(
+                uav_num, map_seed, task_seed, cfg)
+            raw, sol, trace = _run_scenario(sc, field, library, reference,
+                                            sac_result, uav_num, map_seed,
+                                            task_seed, cfg, rc)
             records.extend(raw)
             solutions.extend(sol)
             timelines.extend(trace)
+            # RQ2: assignment/sequence value on the SAME context (recovery #6).
+            rq2 = run_rq2(sc, field, library.candidates, reference,
+                          seed=map_seed)
+            rq2.update({"uav_num": uav_num, "map_seed": map_seed,
+                        "task_seed": task_seed})
+            rq2_records.append(rq2)
         _assert_coverage(records, cfg)
+
         counts = Counter((r["method"], r["status"]) for r in records)
         summary = {"mode": "smoke" if cfg["smoke"] else "full",
                    "record_count": len(records),
@@ -486,7 +510,7 @@ def main(argv=None):
                                  for (method, status), count in sorted(counts.items())]}
         for name, value in (("resolved_config.json", cfg), ("raw_records.json", records),
                             ("solutions.json", solutions), ("timelines.json", timelines),
-                            ("summary.json", summary)):
+                            ("summary.json", summary), ("rq2.json", rq2_records)):
             rc.write_bytes(name, _json_bytes(value))
         rc.finalize("success")
     except Exception:
