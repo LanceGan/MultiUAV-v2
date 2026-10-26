@@ -71,6 +71,30 @@ def test_extract_feasibility_success_rate():
     assert out["b"] == {"evaluated": 1, "feasible": 1, "success_rate": 1.0}
 
 
+def test_extract_outage_handles_per_uav_list():
+    from plots import plot_stc_results as plots
+    records = [
+        {"method": "a", "status": "evaluated", "outage_ratio": [0.1, 0.2]},
+        {"method": "a", "status": "evaluated", "outage_ratio": [0.3, 0.4]},
+    ]
+    out = plots.extract_outage(records)
+    # per-UAV list is averaged, then seeds/scenarios are hierarchically averaged
+    assert out["a"] == 0.25
+
+
+def test_check_compatible_raises_on_mixed_hashes():
+    from plots import plot_stc_results as plots
+    records = [
+        {"method": "a", "status": "evaluated", "reference_hash": "h1",
+         "library_hash": "l1", "world_hash": "w1"},
+        {"method": "b", "status": "evaluated", "reference_hash": "h2",
+         "library_hash": "l2", "world_hash": "w2"},
+    ]
+    import pytest
+    with pytest.raises(ValueError):
+        plots.check_compatible(records)
+
+
 def test_extract_ablation_skips_unavailable():
     from plots import plot_stc_results as plots
     records = [

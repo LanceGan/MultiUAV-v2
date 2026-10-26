@@ -50,7 +50,7 @@ J = w_T·T/T_ref + w_D·D/D_ref,   w_T + w_D = 1（默认 0.5 / 0.5）
 | RQ2 分配与排序价值 | `run_stc_main.py`（`run_rq2`） | 分配方法 + 排序方法对比（固定航段/评价器） |
 | RQ3 同步评价必要性 | `run_stc_evaluator_audit.py` | 独立满带宽 / 静态拥塞因子 / 同步评价 误差与反转 |
 | RQ4 全系统对比 | `run_stc_main.py` | 六方法；主对比 Proposed vs Jia / GATSAC / Library-Open-Loop |
-| RQ5 机制与适用性 | `run_stc_ablation.py` + `run_stc_scale.py` | 7 项单机制消融 + 规模/参数族 |
+| RQ5 机制与适用性 | `run_stc_ablation.py` + `run_stc_scale.py` | 7 项单机制消融 + 规模/参数族（每族均评价 Library-Open-Loop 与 Proposed STC-ALNS；含 density 密度族：任务数+区域+基站同步缩放） |
 
 ## 四类 seed（互斥）
 

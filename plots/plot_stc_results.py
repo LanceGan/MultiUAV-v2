@@ -2,11 +2,15 @@
 
 Every plotted value is derived from the finalized (sealed, status ``success``)
 run artifacts; there are no hard-coded result values.  Runs that are not
-sealed/consistent are skipped, and a figure whose input is empty is not written
-(it never fabricates an empty placeholder).
+sealed/consistent are skipped.  Before mixing records, the plotter verifies they
+are compatible (same reference / library / world hash); multi-seed records are
+aggregated hierarchically (mean across method seeds within a scenario, then
+mean across scenarios).  Each figure records its provenance (consumed run ids
+and input hashes) in ``figures_provenance.json``.
 """
 
 import argparse
+import json
 import math
 import os
 import sys
@@ -23,12 +27,71 @@ import matplotlib.pyplot as plt
 
 
 # --------------------------------------------------------------------------- #
-# Pure extraction (no matplotlib) — every value from the records
+# Pure helpers / extraction (no matplotlib) — every value from the records
 # --------------------------------------------------------------------------- #
 
+def _finite(value):
+    if value is None:
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _scalar(value):
+    """Coerce a metric value (scalar or per-UAV list) to a finite float."""
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)):
+        vals = [float(x) for x in value if x is not None]
+        if not vals:
+            return None
+        value = sum(vals) / len(vals)
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def _compat_key(rec):
+    return (rec.get("reference_hash"), rec.get("library_hash"),
+            rec.get("world_hash"))
+
+
+def check_compatible(records):
+    """Raise if records come from incompatible runs (different reference /
+    library / world hashes)."""
+    keys = {_compat_key(r) for r in records if isinstance(r, dict)}
+    keys.discard((None, None, None))
+    if len(keys) > 1:
+        raise ValueError(
+            "incompatible runs mixed: reference/library/world hashes differ: %r"
+            % sorted(keys))
+    return True
+
+
+def _hierarchical_mean(records, value_fn):
+    """Mean across method seeds within a scenario, then mean across scenarios."""
+    by_scen = {}
+    for r in records:
+        if not isinstance(r, dict) or r.get("status") != "evaluated":
+            continue
+        scen = (r.get("uav_num"), r.get("map_seed"), r.get("task_seed"))
+        v = value_fn(r)
+        if v is None:
+            continue
+        by_scen.setdefault((scen, r.get("method")), []).append(v)
+    method_means = {}
+    for (_scen, m), vals in by_scen.items():
+        method_means.setdefault(m, []).append(sum(vals) / len(vals))
+    return {m: sum(vs) / len(vs) for m, vs in method_means.items()}
+
+
 def extract_td_points(records):
-    """Normalized (T/T_ref, D/D_ref) points for evaluated feasible records."""
-    out = []
+    """Per-method normalized (T/T_ref, D/D_ref), hierarchically aggregated."""
+    by_scen = {}
     for r in records:
         if not isinstance(r, dict) or r.get("status") != "evaluated":
             continue
@@ -39,19 +102,35 @@ def extract_td_points(records):
         ms, td = r.get("makespan_s"), r.get("total_delay_s")
         if None in (t_ref, d_ref, ms, td):
             continue
-        if not all(math.isfinite(float(x)) for x in (t_ref, d_ref, ms, td)):
+        if not all(_finite(x) for x in (t_ref, d_ref, ms, td)):
             continue
         if float(t_ref) <= 0 or float(d_ref) <= 0:
             continue
-        out.append({"method": r.get("method"), "label": r.get("label"),
-                    "proposed": bool(r.get("proposed")),
-                    "t_norm": float(ms) / float(t_ref),
-                    "d_norm": float(td) / float(d_ref)})
-    return out
+        scen = (r.get("uav_num"), r.get("map_seed"), r.get("task_seed"))
+        by_scen.setdefault((scen, r.get("method")), []).append(
+            (float(ms) / float(t_ref), float(td) / float(d_ref)))
+
+    labels, proposed = {}, {}
+    for r in records:
+        if isinstance(r, dict) and r.get("method") is not None \
+                and r["method"] not in labels:
+            labels[r["method"]] = r.get("label")
+            proposed[r["method"]] = bool(r.get("proposed"))
+
+    method_means = {}
+    for (_scen, m), pts in by_scen.items():
+        method_means.setdefault(m, []).append(
+            (sum(p[0] for p in pts) / len(pts),
+             sum(p[1] for p in pts) / len(pts)))
+    return [{"method": m, "label": labels.get(m), "proposed": proposed.get(m, False),
+             "t_norm": sum(p[0] for p in pts) / len(pts),
+             "d_norm": sum(p[1] for p in pts) / len(pts)}
+            for m, pts in method_means.items()]
 
 
 def extract_feasibility(records):
-    """Per-method success rate over evaluated (non-unavailable) records."""
+    """Per-method success rate over evaluated (non-unavailable) records (all
+    paired instances)."""
     per = {}
     for r in records:
         if not isinstance(r, dict) or r.get("status") != "evaluated":
@@ -66,28 +145,16 @@ def extract_feasibility(records):
             for m, d in per.items() if d["evaluated"]}
 
 
-def _method_mean(records, key):
-    per = {}
-    for r in records:
-        if not isinstance(r, dict) or r.get("status") != "evaluated":
-            continue
-        v = r.get(key)
-        if v is None or not math.isfinite(float(v)):
-            continue
-        per.setdefault(r.get("method"), []).append(float(v))
-    return {m: sum(vs) / len(vs) for m, vs in per.items()}
-
-
 def extract_outage(records):
-    return _method_mean(records, "outage_ratio")
+    return _hierarchical_mean(records, lambda r: _scalar(r.get("outage_ratio")))
 
 
 def extract_conflict(records):
-    return _method_mean(records, "conflict_lost_bits")
+    return _hierarchical_mean(records, lambda r: _scalar(r.get("conflict_lost_bits")))
 
 
 def extract_waiting(records):
-    return _method_mean(records, "waiting_s")
+    return _hierarchical_mean(records, lambda r: _scalar(r.get("waiting_s")))
 
 
 def extract_balance(records):
@@ -108,7 +175,7 @@ def extract_ablation(records):
     for r in records:
         if not isinstance(r, dict) or r.get("status") != "evaluated":
             continue
-        if r.get("objective") is None:
+        if not _finite(r.get("objective")):
             continue
         out.append({"ablation": r.get("ablation"), "objective": float(r["objective"])})
     return out
@@ -119,7 +186,7 @@ def extract_scale(records):
     for r in records:
         if not isinstance(r, dict) or r.get("status") != "evaluated":
             continue
-        if r.get("objective") is None:
+        if not _finite(r.get("objective")):
             continue
         out.append({"variant": r.get("variant"), "objective": float(r["objective"])})
     return out
@@ -131,7 +198,7 @@ def extract_segment(records):
     for r in records:
         if not isinstance(r, dict) or r.get("status") != "evaluated":
             continue
-        if r.get("feasible_frac") is None:
+        if not _finite(r.get("feasible_frac")):
             continue
         out[r.get("generator")] = float(r["feasible_frac"])
     return out
@@ -205,7 +272,7 @@ def _render_main(records, out_dir):
         labels = list(balance)
         data = [balance[l] for l in labels]
         fig, ax = plt.subplots()
-        ax.boxplot(data, labels=labels)
+        ax.boxplot(data, tick_labels=labels)
         ax.set_ylabel("completion time (s)")
         ax.set_title("Per-UAV completion time balance")
         written.append(_save(fig, out_dir, "stc_balance.png"))
@@ -230,24 +297,43 @@ def _render_segment(records, out_dir):
 
 
 def render_figures(runs_by_experiment, out_dir):
-    """Render every available figure from finalized runs.
+    """Render every available figure from finalized, compatible runs.
 
     ``runs_by_experiment`` maps an experiment name to a list of
     :class:`~experiment.run_stc_gates.LoadedRun`.  Returns the list of written
-    figure paths.
+    figure paths, and writes ``figures_provenance.json`` recording each figure's
+    consumed run ids and input hashes.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
+    provenance = {}
     for experiment, runs in runs_by_experiment.items():
         if experiment == "stc_main":
-            written += _render_main(_concat(runs, "raw_records.json"), out_dir)
+            records = _concat(runs, "raw_records.json")
+            check_compatible(records)
+            figs = _render_main(records, out_dir)
         elif experiment == "stc_ablation":
-            written += _render_ablation(_concat(runs, "records.json"), out_dir)
+            records = _concat(runs, "records.json")
+            figs = _render_ablation(records, out_dir)
         elif experiment == "stc_scale":
-            written += _render_scale(_concat(runs, "records.json"), out_dir)
+            records = _concat(runs, "records.json")
+            figs = _render_scale(records, out_dir)
         elif experiment == "stc_segment_gate":
-            written += _render_segment(_concat(runs, "records.json"), out_dir)
+            records = _concat(runs, "records.json")
+            figs = _render_segment(records, out_dir)
+        else:
+            continue
+        written += figs
+        valid = [r for r in runs if r.valid]
+        for fig in figs:
+            provenance[fig.name] = {
+                "experiment": experiment,
+                "runs": [r.run_id for r in valid],
+                "inputs": {r.run_id: r.manifest.get("inputs", {}) for r in valid},
+            }
+    (out_dir / "figures_provenance.json").write_text(
+        json.dumps(provenance, indent=2, sort_keys=True), encoding="utf-8")
     return written
 
 

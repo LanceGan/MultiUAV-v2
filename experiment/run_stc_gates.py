@@ -9,15 +9,18 @@ directories under ``results/runs/`` and reports PASS / FAIL / NOT_RUN:
 - Gate 3  proposed-method contrast + at least two contributing ablations (RQ5)
 - Gate 4  provenance / reproduction (sealed manifests, hash-consistent)
 
-The report is machine-readable JSON.  A gate whose evidence is entirely absent
-is ``NOT_RUN``; a gate whose evidence is present but invalid or incomplete is
-``FAIL``; only complete valid evidence is ``PASS``.  Nothing here fabricates a
-result: it only verifies what finalized runs already contain.
+A gate whose required evidence is *entirely absent* is ``NOT_RUN``; a gate whose
+evidence is *present but invalid/incomplete* is ``FAIL``; only complete valid
+evidence is ``PASS``.  Evidence is validated, not merely counted: feasibility
+must be finite, both sides of an RQ2 comparison must contain evaluated records,
+ablations must be compared against a ``full`` baseline and genuinely degrade,
+and provenance must record a real git head and input hashes.
 """
 
 import argparse
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -27,6 +30,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from experiment.run_stc_segment_gate import DETERMINISTIC_GENERATORS
+from segment.stc.system_baselines import SYSTEM_BASELINE_KEYS
 
 PASS = "PASS"
 FAIL = "FAIL"
@@ -37,6 +41,8 @@ GATE_ORDER = ("gate_0_evaluator", "gate_1_segment",
               "gate_4_provenance")
 
 PROPOSED_METHODS = ("proposed_stc_alns",)
+BASELINE_METHODS = tuple(m for m in SYSTEM_BASELINE_KEYS
+                         if m not in PROPOSED_METHODS)
 
 
 @dataclass
@@ -59,8 +65,6 @@ def load_run(run_dir):
 
     Returns ``None`` when the directory is not a run at all (no
     ``manifest.json``); such directories are ignored by :func:`scan_runs`.
-    A run whose manifest exists but is not sealed/consistent is returned with
-    ``valid=False`` and its problems recorded.
     """
     run_dir = Path(run_dir)
     manifest_path = run_dir / "manifest.json"
@@ -132,13 +136,42 @@ def _ok(run):
     return run.valid
 
 
-def _nonempty_list(run, name):
-    value = run.artifacts.get(name)
-    return isinstance(value, list) and bool(value)
+def _finite(value):
+    if value is None:
+        return False
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
 
 
 def _gate(status, detail, evidence=()):
     return {"status": status, "detail": detail, "evidence": list(evidence)}
+
+
+def _requirement(present, valid, pass_detail, fail_detail, missing_detail):
+    """One evidence requirement -> ``(status, detail)``."""
+    if not present:
+        return (NOT_RUN, missing_detail)
+    if valid:
+        return (PASS, pass_detail)
+    return (FAIL, fail_detail)
+
+
+def _combine(components):
+    """Combine requirement statuses: FAIL wins, then NOT_RUN, else PASS."""
+    statuses = [c[0] for c in components]
+    if FAIL in statuses:
+        status = FAIL
+    elif NOT_RUN in statuses:
+        status = NOT_RUN
+    else:
+        status = PASS
+    if status == PASS:
+        detail = "; ".join(c[1] for c in components)
+    else:
+        detail = "; ".join(c[1] for c in components if c[0] != PASS)
+    return _gate(status, detail)
 
 
 # --------------------------------------------------------------------------- #
@@ -156,7 +189,8 @@ def evaluate_gate_0(tests_exit_code):
 
 
 def evaluate_gate_1(segment_runs):
-    """Gate 1: segment-layer evidence from finalized ``stc_segment_gate`` runs."""
+    """Gate 1: segment-layer evidence (finite feasibility + both families +
+    a non-empty common-feasible edge intersection)."""
     if not segment_runs:
         return _gate(NOT_RUN, "no stc_segment_gate run found")
     valid = [r for r in segment_runs if _ok(r)]
@@ -165,52 +199,88 @@ def evaluate_gate_1(segment_runs):
                      ["%s: %s" % (r.run_id, "; ".join(r.problems))
                       for r in segment_runs if r.problems])
 
-    evaluated = set()
+    evaluated = {}
     for run in valid:
         for rec in (run.artifacts.get("records.json") or []):
-            if not isinstance(rec, dict):
+            if not isinstance(rec, dict) or rec.get("status") != "evaluated":
                 continue
-            if rec.get("status") == "evaluated" and rec.get("feasible_frac") is not None:
-                evaluated.add(rec.get("generator"))
+            gen = rec.get("generator")
+            if gen is None or not _finite(rec.get("feasible_frac")):
+                continue  # NaN / missing feasibility is not evidence
+            evaluated[gen] = rec
 
-    deterministic = evaluated & set(DETERMINISTIC_GENERATORS)
-    comm_aware = evaluated - {"straight_hold"}
-    if deterministic and comm_aware:
+    deterministic = [g for g in DETERMINISTIC_GENERATORS if g in evaluated]
+    comm_aware = [g for g in evaluated if g != "straight_hold"]
+    common_ok = any(isinstance(r.get("common_feasible_n"), (int, float))
+                    and r["common_feasible_n"] > 0 for r in evaluated.values())
+
+    if deterministic and comm_aware and common_ok:
         return _gate(PASS,
-                     "%d deterministic and %d communication-aware segment "
-                     "generators evaluated" % (len(deterministic), len(comm_aware)),
+                     "%d deterministic and %d communication-aware generators, "
+                     "common-feasible edges present"
+                     % (len(deterministic), len(comm_aware)),
                      sorted(evaluated))
+    problems = []
     if not deterministic:
-        return _gate(FAIL, "no deterministic segment generator evaluated with "
-                           "feasibility", sorted(evaluated))
-    return _gate(FAIL, "no communication-aware segment generator evaluated "
-                       "(only straight_hold)", sorted(evaluated))
+        problems.append("no deterministic generator evaluated with finite feasibility")
+    if not comm_aware:
+        problems.append("no communication-aware generator evaluated")
+    if not common_ok:
+        problems.append("no common-feasible edge intersection (T/D/O not comparable)")
+    return _gate(FAIL, "; ".join(problems), sorted(evaluated))
 
 
-def _has_rq2_evidence(run):
+def _rq2_valid(run):
+    """Valid RQ2 evidence: BOTH an assignment and a sequence comparison with at
+    least one evaluated record each (a list or single dict is accepted)."""
     rq2 = run.artifacts.get("rq2.json")
-    if not isinstance(rq2, dict):
+    if isinstance(rq2, dict):
+        rq2 = [rq2]
+    if not isinstance(rq2, list) or not rq2:
         return False
-    return bool(rq2.get("assignment")) or bool(rq2.get("sequence"))
+    for entry in rq2:
+        if not isinstance(entry, dict):
+            continue
+        assign = entry.get("assignment") or []
+        seq = entry.get("sequence") or []
+        assign_ok = any(isinstance(r, dict) and r.get("status") == "evaluated"
+                        for r in assign)
+        seq_ok = any(isinstance(r, dict) and r.get("status") == "evaluated"
+                     for r in seq)
+        if assign_ok and seq_ok:
+            return True
+    return False
 
 
 def evaluate_gate_2(audit_runs, main_runs):
     """Gate 2: synchronous shared-bandwidth audit (RQ3) + assignment/sequence
     evidence (RQ2)."""
-    if not (audit_runs or main_runs):
-        return _gate(NOT_RUN, "no stc_evaluator_audit or stc_main run found")
-    sync_ok = any(_ok(r) and _nonempty_list(r, "records.json")
-                  for r in audit_runs)
-    rq2_ok = any(_ok(r) and _has_rq2_evidence(r) for r in main_runs)
-    if sync_ok and rq2_ok:
-        return _gate(PASS, "synchronous evaluator audited and assignment/sequence "
-                           "evidence present")
-    missing = []
-    if not sync_ok:
-        missing.append("synchronous shared-bandwidth audit (stc_evaluator_audit)")
-    if not rq2_ok:
-        missing.append("assignment/sequence evidence (rq2.json in stc_main)")
-    return _gate(FAIL, "missing evidence: " + ", ".join(missing))
+    sync_present = bool(audit_runs)
+    sync_valid = False
+    for run in audit_runs:
+        if not _ok(run):
+            continue
+        for rec in (run.artifacts.get("records.json") or []):
+            if isinstance(rec, dict) and rec.get("metric_error"):
+                sync_valid = True
+                break
+        if sync_valid:
+            break
+
+    rq2_present = bool(main_runs)
+    rq2_valid = any(_ok(r) and _rq2_valid(r) for r in main_runs)
+
+    return _combine([
+        _requirement(sync_present, sync_valid,
+                     "synchronous evaluator audited",
+                     "synchronous evaluator audit invalid (no metric_error records)",
+                     "no stc_evaluator_audit run"),
+        _requirement(rq2_present, rq2_valid,
+                     "assignment and sequence comparisons present",
+                     "assignment/sequence evidence invalid (need evaluated records "
+                     "in both assignment and sequence)",
+                     "no stc_main run with rq2 evidence"),
+    ])
 
 
 def _is_proposed(rec):
@@ -218,75 +288,83 @@ def _is_proposed(rec):
 
 
 def evaluate_gate_3(main_runs, ablation_runs):
-    """Gate 3: proposed-method contrast + at least two contributing ablations."""
-    if not (main_runs or ablation_runs):
-        return _gate(NOT_RUN, "no stc_main or stc_ablation run found")
-
-    proposed_seen = False
-    baseline_methods = set()
+    """Gate 3: proposed-method contrast (vs >=2 real baselines with finite
+    objective) + at least two mechanisms that genuinely degrade when removed."""
+    contrast_present = bool(main_runs)
+    proposed_ok = False
+    baselines = set()
     for run in main_runs:
         if not _ok(run):
             continue
         for rec in (run.artifacts.get("raw_records.json") or []):
-            if not isinstance(rec, dict):
+            if not isinstance(rec, dict) or rec.get("status") != "evaluated":
                 continue
-            if rec.get("status") != "evaluated":
+            if not _finite(rec.get("objective")):
                 continue
             if _is_proposed(rec):
-                proposed_seen = True
-            else:
-                baseline_methods.add(rec.get("method"))
+                proposed_ok = True
+            elif rec.get("method") in BASELINE_METHODS:
+                baselines.add(rec.get("method"))
+    contrast_valid = proposed_ok and len(baselines) >= 2
 
-    ablation_contributions = set()
+    ablation_present = bool(ablation_runs)
+    full_obj = None
+    mechanisms = {}
     for run in ablation_runs:
         if not _ok(run):
             continue
         for rec in (run.artifacts.get("records.json") or []):
-            if not isinstance(rec, dict):
+            if not isinstance(rec, dict) or rec.get("status") != "evaluated":
                 continue
-            if rec.get("ablation") == "full":
-                continue
-            if rec.get("status") == "evaluated" and rec.get("objective") is not None:
-                ablation_contributions.add(rec.get("ablation"))
+            if not _finite(rec.get("objective")):
+                continue  # NaN ablation is not evidence
+            name = rec.get("ablation")
+            if name == "full":
+                if full_obj is None:
+                    full_obj = rec["objective"]
+            elif name:
+                mechanisms[name] = rec["objective"]
+    contributing = [n for n, o in mechanisms.items()
+                    if full_obj is not None and o > full_obj]
+    ablation_valid = full_obj is not None and len(contributing) >= 2
 
-    contrast_ok = proposed_seen and len(baseline_methods) >= 2
-    ablation_ok = len(ablation_contributions) >= 2
-    if contrast_ok and ablation_ok:
-        return _gate(PASS,
-                     "proposed contrast against %d baselines and %d contributing "
-                     "ablations" % (len(baseline_methods),
-                                    len(ablation_contributions)),
-                     sorted(ablation_contributions))
-    missing = []
-    if not contrast_ok:
-        missing.append("proposed-method contrast (proposed + >=2 evaluated baselines)")
-    if not ablation_ok:
-        missing.append(">=2 contributing ablations")
-    return _gate(FAIL, "missing evidence: " + ", ".join(missing))
+    return _combine([
+        _requirement(contrast_present, contrast_valid,
+                     "proposed contrast vs %d baselines" % len(baselines),
+                     "proposed contrast invalid (need proposed + >=2 real baselines "
+                     "with finite objective)",
+                     "no stc_main run"),
+        _requirement(ablation_present, ablation_valid,
+                     "%d contributing mechanisms" % len(contributing),
+                     "ablation invalid (need a 'full' comparator + >=2 mechanisms "
+                     "that degrade when removed)",
+                     "no stc_ablation run"),
+    ])
 
 
 def evaluate_gate_4(all_runs):
-    """Gate 4: provenance/reproduction — every finalized run is sealed with
-    hash-consistent artifacts, a recorded git head, and registered inputs."""
+    """Gate 4: provenance/reproduction — every run is sealed, hash-consistent,
+    and records a real git head and registered input hashes."""
     if not all_runs:
         return _gate(NOT_RUN, "no runs found")
-    valid = [r for r in all_runs if _ok(r)]
     invalid = [r for r in all_runs if not _ok(r)]
-    if not valid:
-        return _gate(FAIL, "no finalized/sealed run among %d run(s)" % len(all_runs),
+    if invalid:
+        return _gate(FAIL,
+                     "non-finalized/valid run(s): %s" % ", ".join(r.run_id for r in invalid),
                      ["%s: %s" % (r.run_id, "; ".join(r.problems))
                       for r in invalid])
     problems = []
-    for run in valid:
-        git = run.manifest.get("git") or {}
-        if not git.get("head"):
-            problems.append("%s: no git head recorded" % run.run_id)
-        if not run.manifest.get("inputs"):
+    for run in all_runs:
+        head = (run.manifest.get("git") or {}).get("head", "")
+        if not head or head == "unknown":
+            problems.append("%s: git head missing/unknown" % run.run_id)
+        inputs = run.manifest.get("inputs") or {}
+        if not inputs or not any(str(v) for v in inputs.values()):
             problems.append("%s: no registered input hashes" % run.run_id)
     if problems:
         return _gate(FAIL, "; ".join(problems))
-    return _gate(PASS, "%d finalized run(s) with sealed provenance" % len(valid),
-                 [r.run_id for r in valid])
+    return _gate(PASS, "%d finalized run(s) with sealed provenance" % len(all_runs),
+                 [r.run_id for r in all_runs])
 
 
 # --------------------------------------------------------------------------- #

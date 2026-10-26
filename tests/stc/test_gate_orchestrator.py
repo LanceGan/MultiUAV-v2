@@ -46,7 +46,9 @@ def _write_run(root, run_id, experiment, artifacts, status="success",
 
 def _segment_record(generator, status="evaluated", feasible_frac=0.9):
     return {"generator": generator, "status": status,
-            "feasible_frac": feasible_frac, "n_edges": 4}
+            "feasible_frac": feasible_frac, "n_edges": 4,
+            "common_feasible_n": 1, "t_mean_s": 1.0, "d_mean_s": 1.0,
+            "o_mean": 0.0}
 
 
 def _main_record(method, proposed=False, status="evaluated", feasible=True):
@@ -191,9 +193,26 @@ def test_gate_2_pass_with_both():
     main = gates.load_run(_write_run(
         root, "main", "stc_main",
         {"raw_records.json": [_main_record("proposed_stc_alns", True)],
-         "rq2.json": {"assignment": [{"method": "jia_ebtas"}],
-                      "sequence": []}}))
+         "rq2.json": {"assignment": [{"method": "jia_ebtas", "status": "evaluated"}],
+                      "sequence": [{"method": "distance_nn_2opt", "status": "evaluated"}]}}))
     assert gates.evaluate_gate_2([audit], [main])["status"] == "PASS"
+
+
+def test_gate_2_fail_on_invalid_audit_and_rq2():
+    from experiment import run_stc_gates as gates
+    import tempfile
+    from pathlib import Path
+    root = Path(tempfile.mkdtemp())
+    # audit with only an empty record (no metric_error) is invalid evidence
+    audit = gates.load_run(_write_run(root, "audit", "stc_evaluator_audit",
+                                      {"records.json": [{}]}))
+    # rq2 whose assignment is only "unavailable" and sequence is empty
+    main = gates.load_run(_write_run(
+        root, "main", "stc_main",
+        {"raw_records.json": [_main_record("proposed_stc_alns", True)],
+         "rq2.json": {"assignment": [{"method": "jia_ebtas", "status": "unavailable"}],
+                      "sequence": []}}))
+    assert gates.evaluate_gate_2([audit], [main])["status"] == "FAIL"
 
 
 # --------------------------------------------------------------------------- #
@@ -205,7 +224,7 @@ def test_gate_3_not_run():
     assert gates.evaluate_gate_3([], [])["status"] == "NOT_RUN"
 
 
-def test_gate_3_fail_without_ablations():
+def test_gate_3_not_run_without_ablations():
     from experiment import run_stc_gates as gates
     import tempfile
     from pathlib import Path
@@ -215,7 +234,58 @@ def test_gate_3_fail_without_ablations():
         {"raw_records.json": [_main_record("proposed_stc_alns", True),
                               _main_record("jia_ebtas_style"),
                               _main_record("gatsac_style")]}))
-    assert gates.evaluate_gate_3([main], [])["status"] == "FAIL"
+    # ablation evidence is entirely absent -> NOT_RUN, not FAIL
+    assert gates.evaluate_gate_3([main], [])["status"] == "NOT_RUN"
+
+
+def test_gate_3_fail_on_fake_baselines():
+    from experiment import run_stc_gates as gates
+    import tempfile
+    from pathlib import Path
+    root = Path(tempfile.mkdtemp())
+    # fake baseline names (not in the registered set) are not real contrast
+    main = gates.load_run(_write_run(
+        root, "main", "stc_main",
+        {"raw_records.json": [_main_record("proposed_stc_alns", True),
+                              _main_record("totally_fake_baseline"),
+                              _main_record("another_fake")]}))
+    ablation = gates.load_run(_write_run(
+        root, "ablation", "stc_ablation",
+        {"records.json": [{"ablation": "full", "status": "evaluated", "objective": 0.8},
+                          {"ablation": "a", "status": "evaluated", "objective": 0.9},
+                          {"ablation": "b", "status": "evaluated", "objective": 0.85}]}))
+    assert gates.evaluate_gate_3([main], [ablation])["status"] == "FAIL"
+
+
+def test_gate_3_fail_on_no_full_comparator_or_nan():
+    from experiment import run_stc_gates as gates
+    import tempfile
+    from pathlib import Path
+    root = Path(tempfile.mkdtemp())
+    main = gates.load_run(_write_run(
+        root, "main", "stc_main",
+        {"raw_records.json": [_main_record("proposed_stc_alns", True),
+                              _main_record("jia_ebtas_style"),
+                              _main_record("library_open_loop")]}))
+    # no "full" comparator; one ablation objective is None (NaN)
+    ablation = gates.load_run(_write_run(
+        root, "ablation", "stc_ablation",
+        {"records.json": [{"ablation": "a", "status": "evaluated", "objective": 0.9},
+                          {"ablation": "b", "status": "evaluated", "objective": None}]}))
+    assert gates.evaluate_gate_3([main], [ablation])["status"] == "FAIL"
+
+
+def test_gate_1_fail_on_nan_feasibility():
+    from experiment import run_stc_gates as gates
+    import tempfile
+    from pathlib import Path
+    root = Path(tempfile.mkdtemp())
+    # single comm-waypoint with NaN feasibility is not valid evidence
+    run = gates.load_run(_write_run(
+        root, "seg", "stc_segment_gate",
+        {"records.json": [{"generator": "comm_waypoint", "status": "evaluated",
+                           "feasible_frac": None, "common_feasible_n": 0}]}))
+    assert gates.evaluate_gate_1([run])["status"] == "FAIL"
 
 
 def test_gate_3_pass():
