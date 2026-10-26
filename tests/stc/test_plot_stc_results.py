@@ -110,13 +110,18 @@ def test_extract_ablation_skips_unavailable():
 def test_extract_scale_skips_unavailable():
     from plots import plot_stc_results as plots
     records = [
-        {"family": "uav", "variant": "U=2", "status": "evaluated", "objective": 0.5},
-        {"family": "uav", "variant": "U=3", "status": "evaluated", "objective": 0.6},
-        {"family": "uav", "variant": "U=4", "status": "unavailable", "objective": None},
+        {"method": "proposed_stc_alns", "family": "uav", "variant": "U=2",
+         "status": "evaluated", "objective": 0.5},
+        {"method": "proposed_stc_alns", "family": "uav", "variant": "U=3",
+         "status": "evaluated", "objective": 0.6},
+        {"method": "proposed_stc_alns", "family": "uav", "variant": "U=4",
+         "status": "unavailable", "objective": None},
     ]
     out = plots.extract_scale(records)
-    assert out == [{"variant": "U=2", "objective": 0.5},
-                   {"variant": "U=3", "objective": 0.6}]
+    assert out == [{"method": "proposed_stc_alns", "family": "uav", "variant": "U=2",
+                    "objective": 0.5},
+                   {"method": "proposed_stc_alns", "family": "uav", "variant": "U=3",
+                    "objective": 0.6}]
 
 
 # --------------------------------------------------------------------------- #

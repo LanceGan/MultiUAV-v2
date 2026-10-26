@@ -44,11 +44,20 @@ def _write_run(root, run_id, experiment, artifacts, status="success",
     return run_dir
 
 
-def _segment_record(generator, status="evaluated", feasible_frac=0.9):
+_EDGES = [[-1, 0], [0, 1], [1, 2], [2, 3]]
+
+
+def _segment_record(generator, status="evaluated", feasible_frac=0.9,
+                    per_edge=None, common_feasible_edges=None):
+    edges = per_edge if per_edge is not None else _EDGES
+    common = (common_feasible_edges if common_feasible_edges is not None
+              else edges)
     return {"generator": generator, "status": status,
-            "feasible_frac": feasible_frac, "n_edges": 4,
-            "common_feasible_n": 1, "t_mean_s": 1.0, "d_mean_s": 1.0,
-            "o_mean": 0.0}
+            "feasible_frac": feasible_frac, "n_edges": len(edges),
+            "common_feasible_n": len(common), "t_mean_s": 1.0,
+            "d_mean_s": 1.0, "o_mean": 0.0,
+            "per_edge": [{"edge": e, "feasible": True} for e in edges],
+            "common_feasible_edges": common}
 
 
 def _main_record(method, proposed=False, status="evaluated", feasible=True):
@@ -193,8 +202,10 @@ def test_gate_2_pass_with_both():
     main = gates.load_run(_write_run(
         root, "main", "stc_main",
         {"raw_records.json": [_main_record("proposed_stc_alns", True)],
-         "rq2.json": {"assignment": [{"method": "jia_ebtas", "status": "evaluated"}],
-                      "sequence": [{"method": "distance_nn_2opt", "status": "evaluated"}]}}))
+         "rq2.json": {"assignment": [{"method": "jia_ebtas", "status": "evaluated",
+                                      "objective": 0.9}],
+                      "sequence": [{"method": "distance_nn_2opt", "status": "evaluated",
+                                    "objective": 0.8}]}}))
     assert gates.evaluate_gate_2([audit], [main])["status"] == "PASS"
 
 
@@ -335,7 +346,7 @@ def test_gate_4_pass():
     root = Path(tempfile.mkdtemp())
     good = gates.load_run(_write_run(root, "good", "stc_main",
                                      {"summary.json": {}},
-                                     inputs={"scenario": "abc"}))
+                                     inputs={"scenario": "a" * 64}))
     assert gates.evaluate_gate_4([good])["status"] == "PASS"
 
 

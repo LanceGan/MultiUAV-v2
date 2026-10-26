@@ -61,14 +61,42 @@ def _compat_key(rec):
 
 
 def check_compatible(records):
-    """Raise if records come from incompatible runs (different reference /
-    library / world hashes)."""
-    keys = {_compat_key(r) for r in records if isinstance(r, dict)}
-    keys.discard((None, None, None))
-    if len(keys) > 1:
-        raise ValueError(
-            "incompatible runs mixed: reference/library/world hashes differ: %r"
-            % sorted(keys))
+    """Raise if records from the SAME scenario mix incompatible runs.
+
+    Records across different scenarios legitimately differ (different map/task
+    seeds); only records within one scenario must share reference/library/world
+    hashes.  Mixing scenarios is expected and handled by hierarchical
+    aggregation, not rejected.
+    """
+    by_scen = {}
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        scen = (r.get("uav_num"), r.get("map_seed"), r.get("task_seed"))
+        by_scen.setdefault(scen, set()).add(_compat_key(r))
+    problems = []
+    for scen, keys in by_scen.items():
+        keys.discard((None, None, None))
+        if len(keys) > 1:
+            problems.append("scenario %r mixes incompatible runs: %r"
+                            % (scen, sorted(keys)))
+    if problems:
+        raise ValueError("; ".join(problems))
+    return True
+
+
+def check_same_source(runs):
+    """Raise if valid runs come from different source/evaluator versions.
+
+    The git head is the source (and therefore evaluator) version: figures must
+    never mix records computed by different code versions.
+    """
+    heads = {r.manifest.get("git", {}).get("head") for r in runs if r.valid}
+    heads.discard(None)
+    heads.discard("unknown")
+    if len(heads) > 1:
+        raise ValueError("runs mix incompatible source versions: %r"
+                         % sorted(heads))
     return True
 
 
@@ -170,38 +198,95 @@ def extract_balance(records):
     return per
 
 
+def _mean(values):
+    return sum(values) / len(values)
+
+
 def extract_ablation(records):
-    out = []
+    """Mean objective per ablation name (replicates are averaged, never
+    silently overwritten by the last one)."""
+    acc = {}
     for r in records:
         if not isinstance(r, dict) or r.get("status") != "evaluated":
             continue
         if not _finite(r.get("objective")):
             continue
-        out.append({"ablation": r.get("ablation"), "objective": float(r["objective"])})
-    return out
+        acc.setdefault(r.get("ablation"), []).append(float(r["objective"]))
+    return [{"ablation": k, "objective": _mean(v)}
+            for k, v in acc.items() if k is not None]
 
 
 def extract_scale(records):
-    out = []
+    """Mean objective per (method, family, variant) — method/family identity is
+    retained so a scale figure never conflates the open-loop baseline with the
+    Proposed solver or one family with another."""
+    acc = {}
     for r in records:
         if not isinstance(r, dict) or r.get("status") != "evaluated":
             continue
         if not _finite(r.get("objective")):
             continue
-        out.append({"variant": r.get("variant"), "objective": float(r["objective"])})
-    return out
+        key = (r.get("method"), r.get("family"), r.get("variant"))
+        acc.setdefault(key, []).append(float(r["objective"]))
+    return [{"method": k[0], "family": k[1], "variant": k[2],
+             "objective": _mean(v)} for k, v in acc.items()]
 
 
 def extract_segment(records):
-    """Generator -> feasible fraction (segment-layer evidence)."""
-    out = {}
+    """Generator -> mean feasible fraction (replicates averaged)."""
+    acc = {}
     for r in records:
         if not isinstance(r, dict) or r.get("status") != "evaluated":
             continue
         if not _finite(r.get("feasible_frac")):
             continue
-        out[r.get("generator")] = float(r["feasible_frac"])
-    return out
+        acc.setdefault(r.get("generator"), []).append(float(r["feasible_frac"]))
+    return {k: _mean(v) for k, v in acc.items() if k is not None}
+
+
+def extract_rq2(runs):
+    """RQ2 assignment / sequence mean objective per method, across runs."""
+    assign, seq = {}, {}
+    for run in runs:
+        if not run.valid:
+            continue
+        rq2 = run.artifacts.get("rq2.json")
+        if isinstance(rq2, dict):
+            rq2 = [rq2]
+        for entry in (rq2 or []):
+            if not isinstance(entry, dict):
+                continue
+            for layer, target in (("assignment", assign), ("sequence", seq)):
+                for rec in (entry.get(layer) or []):
+                    if not isinstance(rec, dict) or rec.get("status") != "evaluated":
+                        continue
+                    m, o = rec.get("method"), rec.get("objective")
+                    if m is None or not _finite(o):
+                        continue
+                    target.setdefault(m, []).append(float(o))
+    return {"assignment": {m: _mean(v) for m, v in assign.items()},
+            "sequence": {m: _mean(v) for m, v in seq.items()}}
+
+
+def extract_rq3(runs):
+    """RQ3 mean metric error per approximation mode.metric, across runs."""
+    acc = {}
+    for run in runs:
+        if not run.valid:
+            continue
+        for rec in (run.artifacts.get("records.json") or []):
+            if not isinstance(rec, dict):
+                continue
+            me = rec.get("metric_error")
+            if not isinstance(me, dict):
+                continue
+            for mode, metrics in me.items():
+                if not isinstance(metrics, dict):
+                    continue
+                for metric, value in metrics.items():
+                    if _finite(value):
+                        acc.setdefault("%s.%s" % (mode, metric), []).append(float(value))
+    return {k: _mean(v) for k, v in acc.items()}
 
 
 # --------------------------------------------------------------------------- #
@@ -286,8 +371,11 @@ def _render_ablation(records, out_dir):
 
 
 def _render_scale(records, out_dir):
-    data = {s["variant"]: s["objective"] for s in extract_scale(records)}
-    return _bar(out_dir, "stc_scale.png", data, "objective", "Scale")
+    data = {"%s | %s | %s" % (s["method"] or "?", s["family"] or "?",
+                              s["variant"] or "?"): s["objective"]
+            for s in extract_scale(records)}
+    return _bar(out_dir, "stc_scale.png", data, "objective",
+                "Scale (method | family | variant)")
 
 
 def _render_segment(records, out_dir):
@@ -296,23 +384,45 @@ def _render_segment(records, out_dir):
                 "feasible fraction", "Segment generator feasibility")
 
 
+def _render_rq2(runs, out_dir):
+    written = []
+    rq2 = extract_rq2(runs)
+    for layer, name in (("assignment", "stc_rq2_assignment.png"),
+                        ("sequence", "stc_rq2_sequence.png")):
+        written += _bar(out_dir, name, rq2[layer], "objective", "RQ2 " + layer)
+    return written
+
+
+def _render_rq3(runs, out_dir):
+    data = extract_rq3(runs)
+    return _bar(out_dir, "stc_rq3_metric_error.png", data,
+                "mean absolute error", "RQ3 evaluator approximation error")
+
+
 def render_figures(runs_by_experiment, out_dir):
     """Render every available figure from finalized, compatible runs.
 
     ``runs_by_experiment`` maps an experiment name to a list of
-    :class:`~experiment.run_stc_gates.LoadedRun`.  Returns the list of written
-    figure paths, and writes ``figures_provenance.json`` recording each figure's
-    consumed run ids and input hashes.
+    :class:`~experiment.run_stc_gates.LoadedRun`.  Runs within one experiment
+    must share the same source/evaluator version; records within one scenario
+    must share hashes.  Returns the list of written figure paths, writes
+    ``figures_provenance.json``, and writes an immutable content-addressed
+    ``reporting_bundle.json``.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
     provenance = {}
     for experiment, runs in runs_by_experiment.items():
+        valid = [r for r in runs if r.valid]
+        if not valid:
+            continue
+        check_same_source(valid)
         if experiment == "stc_main":
             records = _concat(runs, "raw_records.json")
             check_compatible(records)
             figs = _render_main(records, out_dir)
+            figs += _render_rq2(valid, out_dir)
         elif experiment == "stc_ablation":
             records = _concat(runs, "records.json")
             figs = _render_ablation(records, out_dir)
@@ -322,19 +432,45 @@ def render_figures(runs_by_experiment, out_dir):
         elif experiment == "stc_segment_gate":
             records = _concat(runs, "records.json")
             figs = _render_segment(records, out_dir)
+        elif experiment == "stc_evaluator_audit":
+            figs = _render_rq3(valid, out_dir)
         else:
             continue
         written += figs
-        valid = [r for r in runs if r.valid]
         for fig in figs:
             provenance[fig.name] = {
                 "experiment": experiment,
                 "runs": [r.run_id for r in valid],
                 "inputs": {r.run_id: r.manifest.get("inputs", {}) for r in valid},
             }
-    (out_dir / "figures_provenance.json").write_text(
-        json.dumps(provenance, indent=2, sort_keys=True), encoding="utf-8")
+    _write_reporting_bundle(out_dir, written, provenance)
     return written
+
+
+def _write_reporting_bundle(out_dir, written, provenance):
+    """Write an immutable content-addressed reporting bundle.
+
+    Records every figure's SHA-256 and byte length plus the provenance JSON's
+    hash, so any tampering with the figure bundle is detectable.
+    """
+    import hashlib
+    prov_path = out_dir / "figures_provenance.json"
+    prov_path.write_text(json.dumps(provenance, indent=2, sort_keys=True),
+                         encoding="utf-8")
+    bundle = {
+        "figures": {},
+        "provenance_sha256": hashlib.sha256(prov_path.read_bytes()).hexdigest(),
+        "n_figures": len(written),
+    }
+    for fig in written:
+        data = fig.read_bytes()
+        bundle["figures"][fig.name] = {
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "bytes": len(data),
+        }
+    (out_dir / "reporting_bundle.json").write_text(
+        json.dumps(bundle, indent=2, sort_keys=True), encoding="utf-8")
+    return out_dir / "reporting_bundle.json"
 
 
 def load_valid_runs(run_paths):

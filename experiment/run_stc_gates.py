@@ -145,6 +145,34 @@ def _finite(value):
         return False
 
 
+def _valid_sha256(value):
+    """A registered input/artifact hash must be a 64-char SHA-256 hex string."""
+    s = str(value)
+    return (len(s) == 64
+            and all(c in "0123456789abcdefABCDEF" for c in s))
+
+
+def _valid_rq2_record(r):
+    """An RQ2 record is valid evidence only with a method name and a finite
+    objective or makespan (an evaluated-but-metricless record is not evidence)."""
+    return (isinstance(r, dict)
+            and r.get("status") == "evaluated"
+            and isinstance(r.get("method"), str) and bool(r.get("method"))
+            and (_finite(r.get("objective")) or _finite(r.get("makespan_s"))))
+
+
+def _valid_metric_error(rec):
+    """An audit record is valid only if ``metric_error`` is a non-empty dict of
+    finite metric deviations (a NaN / non-dict ``metric_error`` is not evidence)."""
+    me = rec.get("metric_error")
+    if not isinstance(me, dict) or not me:
+        return False
+    for mode in me.values():
+        if isinstance(mode, dict) and any(_finite(v) for v in mode.values()):
+            return True
+    return False
+
+
 def _gate(status, detail, evidence=()):
     return {"status": status, "detail": detail, "evidence": list(evidence)}
 
@@ -189,8 +217,16 @@ def evaluate_gate_0(tests_exit_code):
 
 
 def evaluate_gate_1(segment_runs):
-    """Gate 1: segment-layer evidence (finite feasibility + both families +
-    a non-empty common-feasible edge intersection)."""
+    """Gate 1: segment-layer evidence.
+
+    Requires BOTH a straight-hold baseline and at least one communication-aware
+    generator (finite feasibility), plus a real common-feasible edge
+    intersection: the reported common-feasible IDs must be present in every
+    evaluated generator's per-edge records with ``feasible`` true, and each
+    generator must cover the full edge set (``n_edges`` == ``len(per_edge)``).
+    A lone communication-aware record (no straight-hold baseline) is NOT
+    evidence.
+    """
     if not segment_runs:
         return _gate(NOT_RUN, "no stc_segment_gate run found")
     valid = [r for r in segment_runs if _ok(r)]
@@ -209,30 +245,47 @@ def evaluate_gate_1(segment_runs):
                 continue  # NaN / missing feasibility is not evidence
             evaluated[gen] = rec
 
-    deterministic = [g for g in DETERMINISTIC_GENERATORS if g in evaluated]
-    comm_aware = [g for g in evaluated if g != "straight_hold"]
-    common_ok = any(isinstance(r.get("common_feasible_n"), (int, float))
-                    and r["common_feasible_n"] > 0 for r in evaluated.values())
-
-    if deterministic and comm_aware and common_ok:
-        return _gate(PASS,
-                     "%d deterministic and %d communication-aware generators, "
-                     "common-feasible edges present"
-                     % (len(deterministic), len(comm_aware)),
-                     sorted(evaluated))
     problems = []
-    if not deterministic:
-        problems.append("no deterministic generator evaluated with finite feasibility")
+    if "straight_hold" not in evaluated:
+        problems.append("no straight_hold baseline evaluated")
+    comm_aware = [g for g in evaluated if g != "straight_hold"]
     if not comm_aware:
         problems.append("no communication-aware generator evaluated")
-    if not common_ok:
-        problems.append("no common-feasible edge intersection (T/D/O not comparable)")
-    return _gate(FAIL, "; ".join(problems), sorted(evaluated))
+
+    # the common-feasible edge IDs must be real (feasible in every generator's
+    # per-edge records), every generator must cover the full edge set, and every
+    # generator must declare the SAME intersection
+    common = None
+    declared_sets = []
+    for gen, rec in evaluated.items():
+        per_edge = rec.get("per_edge") or []
+        n_edges = rec.get("n_edges")
+        if not per_edge or n_edges is None or len(per_edge) != n_edges:
+            problems.append("generator %s per-edge coverage incomplete" % gen)
+            continue
+        feasible_ids = {tuple(pe["edge"]) for pe in per_edge
+                        if isinstance(pe, dict) and pe.get("feasible")}
+        common = feasible_ids if common is None else (common & feasible_ids)
+        declared_sets.append({tuple(e) for e in (rec.get("common_feasible_edges") or [])})
+    common = common or set()
+    if evaluated:
+        if not common:
+            problems.append("no common-feasible edge intersection (T/D/O not comparable)")
+        elif not declared_sets or any(d != common for d in declared_sets):
+            problems.append("common-feasible edge IDs inconsistent with per-edge records")
+
+    if problems:
+        return _gate(FAIL, "; ".join(problems), sorted(evaluated))
+    return _gate(PASS,
+                 "%d generator(s) with a real common-feasible edge intersection"
+                 % len(evaluated), sorted(evaluated))
 
 
 def _rq2_valid(run):
     """Valid RQ2 evidence: BOTH an assignment and a sequence comparison with at
-    least one evaluated record each (a list or single dict is accepted)."""
+    least one evaluated, metric-carrying record each (a list or single dict is
+    accepted).  An evaluated record without a method or finite metric is not
+    evidence."""
     rq2 = run.artifacts.get("rq2.json")
     if isinstance(rq2, dict):
         rq2 = [rq2]
@@ -243,11 +296,8 @@ def _rq2_valid(run):
             continue
         assign = entry.get("assignment") or []
         seq = entry.get("sequence") or []
-        assign_ok = any(isinstance(r, dict) and r.get("status") == "evaluated"
-                        for r in assign)
-        seq_ok = any(isinstance(r, dict) and r.get("status") == "evaluated"
-                     for r in seq)
-        if assign_ok and seq_ok:
+        if (any(_valid_rq2_record(r) for r in assign)
+                and any(_valid_rq2_record(r) for r in seq)):
             return True
     return False
 
@@ -261,7 +311,7 @@ def evaluate_gate_2(audit_runs, main_runs):
         if not _ok(run):
             continue
         for rec in (run.artifacts.get("records.json") or []):
-            if isinstance(rec, dict) and rec.get("metric_error"):
+            if isinstance(rec, dict) and _valid_metric_error(rec):
                 sync_valid = True
                 break
         if sync_valid:
@@ -287,57 +337,82 @@ def _is_proposed(rec):
     return bool(rec.get("proposed")) or rec.get("method") in PROPOSED_METHODS
 
 
+def _scenario_key(rec):
+    return (rec.get("uav_num"), rec.get("map_seed"), rec.get("task_seed"))
+
+
 def evaluate_gate_3(main_runs, ablation_runs):
     """Gate 3: proposed-method contrast (vs >=2 real baselines with finite
-    objective) + at least two mechanisms that genuinely degrade when removed."""
+    objective) + at least two mechanisms that genuinely degrade when removed.
+
+    Both checks are evaluated WITHIN a single scenario: evidence is never
+    spliced across scenarios (proposed from one scenario + baselines from
+    another is not a contrast).  Only the declared ablation mechanism names
+    count as contributions; an arbitrary name never does.
+    """
+    from experiment.run_stc_ablation import ABLATIONS as KNOWN_ABLATIONS
+
     contrast_present = bool(main_runs)
-    proposed_ok = False
-    baselines = set()
+    contrast_valid = False
+    n_baselines = 0
     for run in main_runs:
         if not _ok(run):
             continue
+        by_scen = {}
         for rec in (run.artifacts.get("raw_records.json") or []):
             if not isinstance(rec, dict) or rec.get("status") != "evaluated":
                 continue
             if not _finite(rec.get("objective")):
                 continue
+            d = by_scen.setdefault(_scenario_key(rec),
+                                   {"proposed": False, "baselines": set()})
             if _is_proposed(rec):
-                proposed_ok = True
+                d["proposed"] = True
             elif rec.get("method") in BASELINE_METHODS:
-                baselines.add(rec.get("method"))
-    contrast_valid = proposed_ok and len(baselines) >= 2
+                d["baselines"].add(rec.get("method"))
+        for d in by_scen.values():
+            if d["proposed"] and len(d["baselines"]) >= 2:
+                contrast_valid = True
+                n_baselines = max(n_baselines, len(d["baselines"]))
 
     ablation_present = bool(ablation_runs)
-    full_obj = None
-    mechanisms = {}
+    ablation_valid = False
+    n_contributing = 0
     for run in ablation_runs:
         if not _ok(run):
             continue
+        by_scen = {}
         for rec in (run.artifacts.get("records.json") or []):
             if not isinstance(rec, dict) or rec.get("status") != "evaluated":
                 continue
             if not _finite(rec.get("objective")):
                 continue  # NaN ablation is not evidence
             name = rec.get("ablation")
+            if name != "full" and name not in KNOWN_ABLATIONS:
+                continue  # arbitrary names never count as contributions
+            d = by_scen.setdefault(_scenario_key(rec), {"full": None, "mech": {}})
             if name == "full":
-                if full_obj is None:
-                    full_obj = rec["objective"]
-            elif name:
-                mechanisms[name] = rec["objective"]
-    contributing = [n for n, o in mechanisms.items()
-                    if full_obj is not None and o > full_obj]
-    ablation_valid = full_obj is not None and len(contributing) >= 2
+                d["full"] = rec["objective"]
+            else:
+                d["mech"][name] = rec["objective"]
+        for d in by_scen.values():
+            if d["full"] is None:
+                continue
+            contrib = [n for n, o in d["mech"].items() if o > d["full"]]
+            if len(contrib) >= 2:
+                ablation_valid = True
+                n_contributing = max(n_contributing, len(contrib))
 
     return _combine([
         _requirement(contrast_present, contrast_valid,
-                     "proposed contrast vs %d baselines" % len(baselines),
+                     "proposed contrast vs %d baselines" % n_baselines,
                      "proposed contrast invalid (need proposed + >=2 real baselines "
-                     "with finite objective)",
+                     "with finite objective within one scenario)",
                      "no stc_main run"),
         _requirement(ablation_present, ablation_valid,
-                     "%d contributing mechanisms" % len(contributing),
-                     "ablation invalid (need a 'full' comparator + >=2 mechanisms "
-                     "that degrade when removed)",
+                     "%d contributing mechanisms" % n_contributing,
+                     "ablation invalid (need a 'full' comparator + >=2 declared "
+                     "mechanisms that degrade when removed, within one scenario)",
                      "no stc_ablation run"),
     ])
 
@@ -361,6 +436,17 @@ def evaluate_gate_4(all_runs):
         inputs = run.manifest.get("inputs") or {}
         if not inputs or not any(str(v) for v in inputs.values()):
             problems.append("%s: no registered input hashes" % run.run_id)
+        bad_inputs = [k for k, v in inputs.items()
+                      if v and not _valid_sha256(v)]
+        if bad_inputs:
+            problems.append("%s: invalid input hash (not SHA-256 hex): %s"
+                            % (run.run_id, ", ".join(bad_inputs)))
+        expected = run.manifest.get("expected") or []
+        if not expected:
+            problems.append("%s: no expected artifacts declared" % run.run_id)
+        hashes = run.manifest.get("hashes") or {}
+        if not hashes:
+            problems.append("%s: no artifact hashes recorded" % run.run_id)
     if problems:
         return _gate(FAIL, "; ".join(problems))
     return _gate(PASS, "%d finalized run(s) with sealed provenance" % len(all_runs),
