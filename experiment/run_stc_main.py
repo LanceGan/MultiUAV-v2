@@ -263,16 +263,23 @@ def _result_payload(r, scenario):
 
 
 def _unavailable_payload(method, reason, cfg):
-    """Explicit unavailable/failed record for one method (declared or runtime)."""
+    """A method declared unavailable before any execution begins."""
     return dict(status="unavailable", feasible=None, objective=None,
                 makespan_s=None, total_delay_s=None, outage_ratio=None,
                 violations=None, balance=None, conflict_lost_bits=None,
                 conflict_duration_s=None, waiting_s=None,
                 evaluator_calls={"full": 0, "incremental": 0},
                 failure_reason=reason, availability_declared=True,
-                label=METHOD_SPECS[method].label, proposed=False,
+                label=METHOD_SPECS[method].label, proposed=METHOD_SPECS[method].proposed,
                 provenance={"required_method": method,
                             "checkpoint_path": cfg["sac_checkpoint"]})
+
+
+def _failed_payload(method, exc, cfg):
+    payload = _unavailable_payload(method, "execution failure: %r" % exc, cfg)
+    payload.update(status="failed", availability_declared=False,
+                   evaluator_calls=None, failure_type=type(exc).__name__)
+    return payload
 
 
 def _build_context(uav_num, map_seed, task_seed, cfg):
@@ -297,7 +304,7 @@ def _build_context(uav_num, map_seed, task_seed, cfg):
 
 
 def _run_scenario(sc, field, library, reference, sac_result,
-                  uav_num, map_seed, task_seed, cfg, rc):
+                  uav_num, map_seed, task_seed, cfg, rc, checkpoint=None):
     prefix = "%d_%d_%d" % (uav_num, map_seed, task_seed)
     inputs = {}
     for kind, data in (
@@ -336,6 +343,7 @@ def _run_scenario(sc, field, library, reference, sac_result,
                       "library_hash": inputs["library"], "input_hashes": inputs,
                       "world_hash": field.world_hash}
             start = time.perf_counter()
+            failure = None
             if method in unavailable:
                 payload = _unavailable_payload(method, unavailable[method], cfg)
                 solution, trace = None, None
@@ -349,17 +357,24 @@ def _run_scenario(sc, field, library, reference, sac_result,
                                             **options)
                     payload = _result_payload(r, sc)
                     solution, trace = r.solution, r.result.timelines
-                except Exception as exc:
-                    # one method failing must not drop the earlier methods'
-                    # completed results within this scenario
-                    payload = _unavailable_payload(
-                        method, "runtime failure: %r" % exc, cfg)
+                except (Exception, KeyboardInterrupt) as exc:
+                    payload = _failed_payload(method, exc, cfg)
+                    failure = exc
                     solution, trace = None, None
             payload["runtime_s"] = time.perf_counter() - start
             records.append(dict(common, **payload))
             solutions.append({"record_id": record_id, "solution": solution})
             timelines.append({"record_id": record_id, "delta_t_s": sc.limits.delta_t_s,
                               "bandwidth_hz": sc.limits.bandwidth_hz, "timelines": trace})
+            if checkpoint is not None:
+                checkpoint(records[-1], solutions[-1], timelines[-1])
+            else:
+                for name, value in (("raw_records.json", records),
+                                    ("solutions.json", solutions),
+                                    ("timelines.json", timelines)):
+                    rc.write_bytes(name, _json_bytes(value))
+            if failure is not None:
+                raise failure
     return records, solutions, timelines
 
 
@@ -513,17 +528,27 @@ def main(argv=None):
                 pass
 
     summary = None
+
+    def _checkpoint_method(record, solution, timeline):
+        records.append(record)
+        solutions.append(solution)
+        timelines.append(timeline)
+        # Do not swallow checkpoint errors during execution: a method is only
+        # complete once its evidence has reached the owning run artifacts.
+        for name, value in (("raw_records.json", records),
+                            ("solutions.json", solutions),
+                            ("timelines.json", timelines)):
+            rc.write_bytes(name, _json_bytes(value))
+
     try:
         for uav_num, map_seed, task_seed in itertools.product(
                 cfg["uav_nums"], cfg["map_seeds"], cfg["task_seeds"]):
             sc, field, library, reference, sac_result = _build_context(
                 uav_num, map_seed, task_seed, cfg)
-            raw, sol, trace = _run_scenario(sc, field, library, reference,
+            _run_scenario(sc, field, library, reference,
                                             sac_result, uav_num, map_seed,
-                                            task_seed, cfg, rc)
-            records.extend(raw)
-            solutions.extend(sol)
-            timelines.extend(trace)
+                                            task_seed, cfg, rc,
+                                            checkpoint=_checkpoint_method)
             # RQ2: assignment/sequence value on the SAME context (recovery #6).
             rq2 = run_rq2(sc, field, library.candidates, reference,
                           seed=map_seed)

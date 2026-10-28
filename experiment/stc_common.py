@@ -7,8 +7,8 @@ or objective path.  The authoritative objective is always
 :class:`segment.stc.types.ObjectiveSpec` and the authoritative physics is always
 :func:`segment.stc.evaluator.evaluate_solution`.
 
-Segment-level feasibility (RQ1) is authoritative too: it runs the synchronous
-evaluator on a minimal single-UAV plan that isolates the segment under test, so
+Segment-level feasibility (RQ1) is authoritative too: it enters the synchronous
+evaluator directly at the tested edge's source with its initial payload, so
 a segment whose G2A outage exceeds ``eps_out`` (or that fails any other
 completion rule) is correctly reported infeasible.
 """
@@ -22,12 +22,15 @@ from pathlib import Path
 
 import numpy as np
 
-from segment.stc.evaluator import evaluate_solution
+from segment.stc.evaluator import (
+    evaluate_solution, evaluate_direct_segment, content_hash, library_content_hash,
+)
 from segment.stc.types import (
     PlanSolution,
     STCScenario,
     SegmentCandidate,
     SegmentLibrary,
+    ViolationVector,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -166,6 +169,18 @@ def seg_view(library, scenario, field=None):
                           task_seed=scenario.task_seed, world_hash=world_hash)
 
 
+def input_provenance(scenario, library, field, objective_spec):
+    """Frozen inputs and exact normalization values for one result record."""
+    ref = objective_spec.reference
+    return {"scenario_hash": content_hash(scenario),
+            "library_hash": library_content_hash(library),
+            "world_hash": field.world_hash,
+            "reference_hash": ref.source_hash,
+            "t_ref_s": ref.t_ref_s, "d_ref_s": ref.d_ref_s,
+            "task_seed": scenario.task_seed, "map_seed": scenario.map_seed,
+            "n_uav": scenario.n_uav, "n_tasks": scenario.n_tasks}
+
+
 # --------------------------------------------------------------------------- #
 # Authoritative single-segment metrics (RQ1)
 # --------------------------------------------------------------------------- #
@@ -215,62 +230,40 @@ def _candidate_content_hash(candidate):
 def evaluate_segment(scenario, candidate, field, objective_spec):
     """Authoritative per-segment metrics via the synchronous slot machine.
 
-    Runs :func:`~segment.stc.evaluator.evaluate_solution` on a single-UAV,
-    single-task plan whose only payload-carrying edge is the segment under test
-    (the depot touches the source position zero-length and the target is the
-    terminal), so the G2A outage, source-point upload, endpoint drain, hold,
-    max-wait and deadline are ALL enforced by the authoritative evaluator —
-    never a re-implementation that could disagree with it.  A ``rankable=False``
+    Runs :func:`~segment.stc.evaluator.evaluate_direct_segment` with the initial
+    source payload at slot zero. G2A outage, upload, endpoint drain, hold,
+    max-wait and deadline use the route evaluator's slot implementation.
+    A ``rankable=False``
     candidate (a relaxation reference, or a learned trajectory that never
     reached the target) is infeasible.  Every result carries the candidate id
     and a trajectory content hash for evidence identity.
     """
-    from segment.stc.generators import generate_straight_hold
-
     base = {
         "candidate_id": candidate.candidate_id,
         "trajectory_hash": _candidate_content_hash(candidate),
+        "generator": candidate.generator,
+        "scenario_hash": content_hash(scenario),
+        "world_hash": field.world_hash,
         "sector_diversity": _sector_entropy(candidate),
     }
     if not candidate.rankable:
         base.update({"feasible": False,
-                     "failure_reason": "non-rankable candidate (no arrival)",
+                     "failure_reason": "non_rankable_candidate",
+                     "violations": ViolationVector(1, 0, 0.0, 0, 0),
                      "flight_time_s": None, "upload_delay_s": None,
                      "outage": None})
         return base
 
-    src, tgt = candidate.source, candidate.target
-    K = scenario.n_tasks
-    A = np.asarray(scenario.depot_m if src == -1
-                   else scenario.task_positions_m[src], dtype=float)
-    B = np.asarray(scenario.terminal_m if tgt == K
-                   else scenario.task_positions_m[tgt], dtype=float)
-    P = float(candidate.source_data_bits)
-
-    sc = STCScenario(
-        n_uav=1, n_tasks=1,
-        task_positions_m=(tuple(A),),
-        task_data_bits=(P,),
-        depot_m=tuple(A), terminal_m=tuple(B),
-        limits=scenario.limits, length_m=scenario.length_m,
-        width_m=scenario.width_m, n_bs=scenario.n_bs,
-        task_seed=scenario.task_seed, map_seed=scenario.map_seed)
-
-    d0 = generate_straight_hold(sc, field, -1, 0)   # depot(A) -> task0(A), zero length
-    seg = _relabel_candidate(candidate, 0, 1)       # task0(A) -> terminal(B): the segment
-    lib = {(-1, 0): (d0,), (0, 1): (seg,)}
-    sol = PlanSolution(routes=((0,),),
-                       candidate_ids=((d0.candidate_id, seg.candidate_id),))
-
-    result = evaluate_solution(sc, lib, sol, field, objective_spec,
-                               keep_timelines=False)
+    result = evaluate_direct_segment(scenario, candidate, field, objective_spec,
+                                     keep_timelines=False)
     base.update({
         "feasible": bool(result.feasible),
         "flight_time_s": float(result.makespan_s),
         "upload_delay_s": float(result.total_delay_s),
         "outage": float(result.outage_ratio[0]),
-        "failure_reason": (None if result.feasible
-                           else "synchronous evaluation infeasible"),
+        "violations": result.violations,
+        "failure_reason": (None if result.feasible else ",".join(
+            name for name, value in asdict(result.violations).items() if value > 0)),
     })
     return base
 
@@ -366,7 +359,7 @@ def evaluate_static_factor(scenario, library, solution, field, objective_spec,
 # --------------------------------------------------------------------------- #
 
 def run_lifecycle(runner_name, cfg, run_id, matrix, per_scenario, summary_fn,
-                  records_name="records.json"):
+                  records_name="records.json", incremental_records=False):
     """Run a matrix with RunContext-first, incremental writes, and a failed
     manifest on interruption.
 
@@ -403,12 +396,19 @@ def run_lifecycle(runner_name, cfg, run_id, matrix, per_scenario, summary_fn,
         except Exception:
             pass
 
+    def _checkpoint(record):
+        records_all.append(record)
+        rc.write_bytes(records_name, json_bytes(records_all))
+
     try:
         for idx, key in enumerate(matrix):
             _check_timeout()
             print("[%s] scenario %d/%d %s" % (runner_name, idx + 1, len(matrix),
                                               tuple(key)))
-            records_all.extend(per_scenario(*key))
+            if incremental_records:
+                per_scenario(*key, checkpoint=_checkpoint)
+            else:
+                records_all.extend(per_scenario(*key))
             completed.append(list(key))
             rc.write_bytes(records_name, json_bytes(records_all))
             rc.write_bytes("progress.json", json_bytes(

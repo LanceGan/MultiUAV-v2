@@ -121,17 +121,15 @@ def test_segment_feasibility_not_diluted_by_virtual_edges():
     from experiment.stc_common import evaluate_segment
     from segment.stc.generators import generate_straight_hold
 
-    sc = _scenario(1, 3)
-    # high=1.6 at the source point, zero elsewhere.  The segment trace has 4
-    # positions, so the segment-only outage is 1.6/4 = 0.40 (> eps_out=0.35)
-    # and must be infeasible.  A plan that wraps the segment in virtual
-    # depot/terminal edges would dilute the outage down to 1.6/5 = 0.32
-    # (<= eps_out) and wrongly report the segment feasible.
-    field = _SourceOutageField(sc.n_sectors, sc.task_positions_m[0], high=1.6)
+    sc = _scenario(1, 3, limits=_limits(eps_out=.3))
+    # The authoritative machine advances before sampling. The four-position
+    # trace therefore takes three slots, with outage 1 only in the first.
+    cand = generate_straight_hold(sc, _field_for(sc), 0, 1)
+    field = _SourceOutageField(sc.n_sectors, cand.positions_m[1], high=1.)
     cand = generate_straight_hold(sc, field, 0, 1)
     result = evaluate_segment(sc, cand, field, _dummy_spec())
     assert result["feasible"] is False
-    assert result["outage"] == pytest.approx(0.40, abs=1e-6)
+    assert result["outage"] == pytest.approx(1 / 3, abs=1e-6)
 
 
 def test_segment_outage_consistent_with_feasibility():
@@ -211,12 +209,15 @@ def test_main_preserves_partial_records_on_failure(monkeypatch, tmp_path):
     def fake_build(u, m, t, cfg):
         return sc, Field(), Lib(), None, SacRes()
 
-    def fake_run(scn, field, library, reference, sac_result, u, m, t, cfg, rc):
+    def fake_run(scn, field, library, reference, sac_result, u, m, t, cfg, rc,
+                 checkpoint=None):
         if m == 8:
             raise RuntimeError("boom on scenario 2")
         rec = {"record_id": "x", "uav_num": u, "map_seed": m, "task_seed": t,
                "method_seed": 0, "method": "proposed_stc_alns",
                "status": "evaluated", "feasible": True, "objective": 1.0}
+        checkpoint(rec, {"record_id": "x", "solution": None},
+                   {"record_id": "x", "timelines": None})
         return [rec], [], []
 
     monkeypatch.setattr(main, "_build_context", fake_build)

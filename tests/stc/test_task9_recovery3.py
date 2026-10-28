@@ -190,12 +190,16 @@ def test_main_isolates_method_failure(monkeypatch):
     import tempfile
     rc = RunContext.create(tempfile.mkdtemp(), "stc_main", cfg, run_id="t")
 
-    records, _sol, _tl = main._run_scenario(
-        sc, field, library, reference, SacRes(), 2, 42, 42, cfg, rc)
+    with pytest.raises(RuntimeError, match="boom"):
+        main._run_scenario(sc, field, library, reference, SacRes(),
+                           2, 42, 42, cfg, rc)
+    records = json.loads((rc.run_dir / "raw_records.json").read_text())
     by_method = {r["method"]: r for r in records}
     assert by_method["region_distance_straight"]["status"] == "evaluated"
-    assert by_method["jia_ebtas_style"]["status"] == "unavailable"
-    assert "runtime failure" in by_method["jia_ebtas_style"]["failure_reason"]
+    assert by_method["jia_ebtas_style"]["status"] == "failed"
+    assert by_method["jia_ebtas_style"]["availability_declared"] is False
+    assert by_method["jia_ebtas_style"]["evaluator_calls"] is None
+    assert "execution failure" in by_method["jia_ebtas_style"]["failure_reason"]
 
 
 # --------------------------------------------------------------------------- #

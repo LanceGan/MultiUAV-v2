@@ -53,7 +53,7 @@ class STCALNS:
     def __init__(self, scenario, library, field, rho=0.1, T0=0.1, cooling=0.995,
                  segment=100, score_new_best=3.0, score_improve=1.0,
                  score_accept=0.5, score_reject=0.0, audit_interval=50,
-                 operator_sets=None, disable_incremental=False):
+                 operator_sets=None, disable_incremental=False, objective_spec=None):
         self.scenario = scenario
         self.library = library
         self.field = field
@@ -75,6 +75,9 @@ class STCALNS:
         self._local = operator_sets.get("local") or local_operators
         # RQ5 ablation: full replay per move instead of incremental resume.
         self.disable_incremental = disable_incremental
+        # Task 9 comparisons can freeze the full-library normalization before
+        # an ablation changes its candidate set. Other callers retain defaults.
+        self.objective_spec = objective_spec
         self.checkpoint = None
 
     # ------------------------------------------------------------------ #
@@ -91,7 +94,8 @@ class STCALNS:
 
     def _fresh_state(self, initial, method_seed):
         rng = np.random.RandomState(method_seed)
-        objective_spec = default_objective_spec(self.scenario, self.library)
+        objective_spec = (self.objective_spec if self.objective_spec is not None
+                          else default_objective_spec(self.scenario, self.library))
         ctx = SearchContext(scenario=self.scenario, library=self.library,
                             field=self.field, objective_spec=objective_spec)
         cache = EvaluationCache.from_full(

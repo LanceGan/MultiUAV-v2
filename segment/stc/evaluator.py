@@ -19,7 +19,8 @@ so the incremental evaluator never re-implements the slot machine.
 """
 
 import hashlib
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass, is_dataclass, replace
 
 import numpy as np
 
@@ -27,6 +28,7 @@ from segment.stc.types import (
     BalanceMetrics,
     EvaluationResult,
     ObjectiveSpec,
+    PlanSolution,
     ReferenceValues,
     TimelineSlot,
     UAVTimeline,
@@ -146,19 +148,22 @@ def _init_state(scenario, solution):
 
 
 def _run_slots(scenario, library, solution, field, state, keep_timelines,
-               capture=None):
+               capture=None, sequences=None):
     """Advance the authoritative slot machine from ``state.start_slot`` to the end.
 
     ``capture``, when given, is called as ``capture(n, state)`` at the start of
     each processed slot (before any state mutation), so an incremental caller
     can seed later resume points.
     """
-    uav_cands, uav_edges = _build_cand_seqs(scenario, library, solution)
+    uav_cands, uav_edges = (sequences if sequences is not None else
+                            _build_cand_seqs(scenario, library, solution))
     limits = scenario.limits
     n_uav = scenario.n_uav
     K = scenario.n_tasks
     dt = limits.delta_t_s
-    max_slots = int(limits.mission_deadline_s / dt) + 1
+    # Process only slots whose end is within the mission deadline. Including
+    # the slot starting at the deadline allowed late completion to pass.
+    max_slots = int(limits.mission_deadline_s / dt + 1e-9)
 
     for n in range(state.start_slot, max_slots):
         if capture is not None:
@@ -236,7 +241,8 @@ def _run_slots(scenario, library, solution, field, state, keep_timelines,
                 cand = uav_cands[u][state.edge[u]]
                 if state.tidx[u] == len(cand.positions_m) - 1 and post_buf[u] <= 0.0:
                     _, tgt = uav_edges[u][state.edge[u]]
-                    service_event[u] = "complete" if tgt == K else "serve"
+                    service_event[u] = ("complete" if state.edge[u] ==
+                                        len(uav_cands[u]) - 1 else "serve")
 
         # record typed TimelineSlot
         if keep_timelines:
@@ -270,7 +276,7 @@ def _run_slots(scenario, library, solution, field, state, keep_timelines,
             if state.airborne[u] and not state.done[u] and service_event[u]:
                 _, tgt = uav_edges[u][state.edge[u]]
                 state.edge_hold[u] = 0.0
-                if tgt == K:
+                if service_event[u] == "complete":
                     state.done[u] = True
                     state.completion[u] = t_end
                 else:
@@ -352,6 +358,28 @@ def evaluate_solution(scenario, library, solution, field, objective_spec,
                          state, keep_timelines)
 
 
+def evaluate_direct_segment(scenario, candidate, field, objective_spec,
+                            keep_timelines=True):
+    """Replay one edge from its source at slot zero through the SAME machine.
+
+    The source has already been serviced: its payload is present before the
+    first slot. Completing this edge ends replay without loading target data.
+    No route edge or airborne slot is synthesized.
+    """
+    _require_objective_spec(objective_spec)
+    sc = replace(scenario, n_uav=1)
+    solution = PlanSolution(routes=((candidate.source,),),
+                            candidate_ids=((candidate.candidate_id,),))
+    state = _init_state(sc, solution)
+    state.unserved = 0
+    state.buf[0] = (0.0 if candidate.source == -1
+                    else float(candidate.source_data_bits))
+    _run_slots(sc, None, solution, field, state, keep_timelines,
+               sequences=([[candidate]], [[(candidate.source, candidate.target)]]))
+    return _build_result(sc, None, solution, field, objective_spec,
+                         state, keep_timelines)
+
+
 def simulate_from_state(scenario, library, solution, field, objective_spec,
                         state, keep_timelines=True, capture=None):
     """Resume the authoritative slot machine from ``state.start_slot`` onward.
@@ -404,20 +432,32 @@ def _direct_candidate(library, src, tgt):
     return min(cands, key=lambda c: candidate_cost(c, 0.5))
 
 
-def _reference_hash(scenario, ref_trace):
-    h = hashlib.sha256()
+def content_hash(value):
+    """Canonical, complete scenario/candidate content identity (including arrays)."""
+    def canonical(obj):
+        if is_dataclass(obj):
+            return canonical(asdict(obj))
+        if isinstance(obj, np.ndarray):
+            return canonical(obj.tolist())
+        if isinstance(obj, np.generic):
+            return obj.item()
+        if isinstance(obj, dict):
+            return {k: canonical(v) for k, v in obj.items()}
+        if isinstance(obj, (tuple, list)):
+            return [canonical(v) for v in obj]
+        return obj
+    return hashlib.sha256(json.dumps(canonical(value), sort_keys=True,
+                                     allow_nan=False).encode("utf-8")).hexdigest()
 
-    def add(obj):
-        h.update(repr(obj).encode("utf-8"))
 
-    add(scenario.n_uav); add(scenario.n_tasks)
-    add(scenario.map_seed); add(scenario.task_seed)
-    add(scenario.depot_m); add(scenario.terminal_m)
-    add(tuple(scenario.task_positions_m)); add(tuple(scenario.task_data_bits))
-    lim = scenario.limits
-    add((lim.delta_t_s, lim.v_max_mps, lim.arrive_radius_m, lim.bandwidth_hz))
-    add(tuple(ref_trace))
-    return h.hexdigest()
+def library_content_hash(library):
+    return content_hash([[src, tgt, sorted((content_hash(c) for c in cs))]
+                         for (src, tgt), cs in sorted(library.items())])
+
+
+def _reference_hash(scenario, ref_trace, t_ref_s, d_ref_s):
+    return content_hash({"scenario": scenario, "selected_candidates": ref_trace,
+                         "t_ref_s": t_ref_s, "d_ref_s": d_ref_s})
 
 
 def compute_reference(scenario, library):
@@ -453,11 +493,12 @@ def compute_reference(scenario, library):
             c = _direct_candidate(library, src, tgt)
             ft += c.flight_steps * scenario.limits.delta_t_s
             up += c.source_data_bits / max(float(np.mean(c.full_rate_bps.max(axis=1))), 1e-9)
-            ref_trace.append((src, tgt, c.candidate_id))
+            ref_trace.append((int(src), int(tgt), c.candidate_id, content_hash(c)))
         max_flight = max(max_flight, ft)
         total_upload += up
     return ReferenceValues(t_ref_s=float(max_flight), d_ref_s=float(total_upload),
-                           source_hash=_reference_hash(scenario, ref_trace))
+                           source_hash=_reference_hash(scenario, ref_trace,
+                                                       float(max_flight), float(total_upload)))
 
 
 def default_objective_spec(scenario, library):

@@ -18,6 +18,7 @@ the same :class:`STCALNS` entry point and the authoritative synchronous evaluato
 import argparse
 import os
 import sys
+import time
 
 import numpy as np
 
@@ -26,12 +27,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from experiment.stc_common import (
     add_common_args,
     json_bytes,
+    input_provenance,
     resolve_runner_config,
     run_lifecycle,
     seg_view,
     small_scenario,
 )
 from segment.stc.library import build_all_pairs_library
+from segment.stc.evaluator import default_objective_spec, library_content_hash
 from segment.stc.operators import build_ebtas_initial_solution, build_initial_solution
 from segment.stc.radio import PerSectorRadioField
 from segment.stc.run_context import RunContext
@@ -56,6 +59,7 @@ ABLATIONS = {
 
 DEFAULT_CONFIG = {
     "uav_nums": [2], "map_seeds": [42], "task_seeds": [42],
+    "method_seeds": [0, 1, 2, 3, 4],
     "smoke": False, "smoke_tasks": 6, "spacing_m": 1000.0,
     "iterations": 1000,
     "generator_config": {"straight_hold": True,
@@ -77,40 +81,61 @@ def _reduced_library(scenario, library):
 
 
 def run_ablation(scenario, field, library, seed=42, iterations=1000,
-                 solver_config=None):
+                 solver_config=None, checkpoint=None):
     """Run the full method and each single-mechanism ablation, return records."""
     lib = library.candidates if hasattr(library, "candidates") else dict(library)
     base_config = dict(solver_config or {})
+    spec = default_objective_spec(scenario, lib)
+    provenance = input_provenance(scenario, lib, field, spec)
 
     def _initial(cand):
         return build_ebtas_initial_solution(
             scenario, seg_view(cand, scenario, field), seed=seed)
 
-    def _run_one(name, initial, cand, kwargs):
-        solver = STCALNS(scenario, cand, field, **dict(base_config, **kwargs))
-        sr = solver.solve(initial, iterations=iterations, method_seed=seed)
-        r = sr.best_result
-        return {
-            "ablation": name, "status": "evaluated",
-            "feasible": bool(r.feasible),
-            "objective": (None if r.objective == float("inf")
-                          else float(r.objective)),
-            "makespan_s": float(r.makespan_s),
-            "total_delay_s": float(r.total_delay_s),
-            "evaluator_calls": sr.evaluator_calls,
+    def _run_one(name, initial_factory, cand, kwargs):
+        start = time.perf_counter()
+        rec = {
+            **provenance,
+            "library_hash": library_content_hash(cand),
+            "reference_library_hash": provenance["library_hash"],
+            "ablation": name, "method_seed": seed, "iterations": iterations,
         }
+        failure = None
+        try:
+            initial = initial_factory()
+            solver = STCALNS(scenario, cand, field, objective_spec=spec,
+                             **dict(base_config, **kwargs))
+            sr = solver.solve(initial, iterations=iterations, method_seed=seed)
+            r = sr.best_result
+            rec.update(status="evaluated", feasible=bool(r.feasible),
+                       objective=None if r.objective == float("inf") else float(r.objective),
+                       makespan_s=float(r.makespan_s), total_delay_s=float(r.total_delay_s),
+                       evaluator_calls=sr.evaluator_calls,
+                       iterations_executed=len(sr.search_trace))
+        except (Exception, KeyboardInterrupt) as exc:
+            rec.update(status="failed", feasible=None, objective=None,
+                       makespan_s=None, total_delay_s=None, evaluator_calls=None,
+                       iterations_executed=None, availability_declared=False,
+                       failure_reason=repr(exc), failure_type=type(exc).__name__)
+            failure = exc
+        rec["runtime_s"] = time.perf_counter() - start
+        if checkpoint is not None:
+            checkpoint(rec)
+        if failure is not None:
+            raise failure
+        return rec
 
-    records = [_run_one("full", _initial(lib), lib, {})]
+    records = [_run_one("full", lambda: _initial(lib), lib, {})]
 
     for name in ABLATIONS:
-        initial = _initial(lib)
+        initial = lambda: _initial(lib)
         cand = lib
         kwargs = {}
         if name == "ebtas_init":
-            initial = build_initial_solution(scenario, lib, seed=seed)
+            initial = lambda: build_initial_solution(scenario, lib, seed=seed)
         elif name == "multi_candidate":
             cand = _reduced_library(scenario, lib)
-            initial = _initial(cand)
+            initial = lambda: _initial(cand)
         elif name == "hotspot_destroy":
             kwargs["operator_sets"] = {
                 "destroy": {k: v for k, v in destroy_operators.items()
@@ -129,14 +154,7 @@ def run_ablation(scenario, field, library, seed=42, iterations=1000,
             kwargs["rho"] = 0.0
         elif name == "incremental_eval":
             kwargs["disable_incremental"] = True
-        try:
-            records.append(_run_one(name, initial, cand, kwargs))
-        except Exception as exc:  # a mechanism removal must not crash the runner
-            records.append({"ablation": name, "status": "unavailable",
-                            "feasible": None, "objective": None,
-                            "makespan_s": None, "total_delay_s": None,
-                            "evaluator_calls": None,
-                            "failure_reason": repr(exc)})
+        records.append(_run_one(name, initial, cand, kwargs))
 
     return {"records": records,
             "summary": {"n_ablations": len(ABLATIONS),
@@ -156,23 +174,26 @@ def main(argv=None):
         print("RQ5 ablation: mechanisms=%s" % (["full"] + list(ABLATIONS)))
         return 0
 
-    def per_scenario(uav_num, map_seed, task_seed):
+    def per_scenario(uav_num, map_seed, task_seed, checkpoint):
         base = load_stc_scenario(uav_num, task_seed=task_seed, map_seed=map_seed)
         sc = small_scenario(base, cfg["smoke_tasks"]) if cfg["smoke"] else base
         field = PerSectorRadioField.from_scenario(sc, spacing_m=cfg["spacing_m"])
         library = build_all_pairs_library(sc, field,
                                           generator_config=cfg["generator_config"])
-        out = run_ablation(sc, field, library.candidates, seed=task_seed,
-                           iterations=cfg["iterations"],
-                           solver_config=cfg["solver"])
-        return [{**r, "uav_num": uav_num, "map_seed": map_seed,
-                 "task_seed": task_seed} for r in out["records"]]
+        def emit(record):
+            checkpoint({**record, "uav_num": uav_num, "map_seed": map_seed,
+                        "task_seed": task_seed})
+
+        for method_seed in cfg["method_seeds"]:
+            run_ablation(sc, field, library.candidates, seed=method_seed,
+                               iterations=cfg["iterations"],
+                               solver_config=cfg["solver"], checkpoint=emit)
 
     def summary_fn(records_all):
         return {"record_count": len(records_all), "n_ablations": len(ABLATIONS)}
 
     return run_lifecycle("stc_ablation", cfg, args.run_id, _matrix(cfg),
-                         per_scenario, summary_fn)
+                         per_scenario, summary_fn, incremental_records=True)
 
 
 def _matrix(cfg):

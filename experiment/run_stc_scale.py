@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from experiment.stc_common import (
     add_common_args,
     json_bytes,
+    input_provenance,
     resolve_runner_config,
     run_lifecycle,
     seg_view,
@@ -184,6 +185,9 @@ def _eval_methods(sc, field, gen_cfg, method_seed, iterations):
         iterations=iterations,
         iterations_executed=len(sr.search_trace),
         reference_hash=reference_hash))
+    provenance = input_provenance(sc, lib, field, spec)
+    for record in records:
+        record.update(provenance)
     return records
 
 
