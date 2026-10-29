@@ -339,14 +339,37 @@ def test_gate_4_fail_on_invalid_run():
     assert result["status"] == "FAIL"
 
 
+def _write_valid_run(root, run_id, experiment="stc_main"):
+    """A fully valid sealed run matching the provenance contract for ``experiment``."""
+    from experiment.run_stc_gates import EXPERIMENT_EXPECTED, EXPERIMENT_REQUIRED_INPUTS
+    run_dir = root / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    expected = sorted(EXPERIMENT_EXPECTED[experiment])
+    hashes = {}
+    for name in expected:
+        data = json.dumps({}, sort_keys=True).encode("utf-8")
+        (run_dir / name).write_bytes(data)
+        hashes[name] = _sha256(data)
+    config = {"uav_nums": [2], "smoke": True}
+    canonical = hashlib.sha256(
+        json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
+    manifest = {
+        "run_id": run_id, "experiment": experiment, "status": "success",
+        "git": {"head": "a" * 40},
+        "inputs": {k: "a" * 64 for k in sorted(EXPERIMENT_REQUIRED_INPUTS[experiment])},
+        "hashes": hashes, "expected": expected,
+        "config": config, "config_sha256": canonical,
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest, sort_keys=True))
+    return run_dir
+
+
 def test_gate_4_pass():
     from experiment import run_stc_gates as gates
     import tempfile
     from pathlib import Path
     root = Path(tempfile.mkdtemp())
-    good = gates.load_run(_write_run(root, "good", "stc_main",
-                                     {"summary.json": {}},
-                                     inputs={"scenario": "a" * 64}))
+    good = gates.load_run(_write_valid_run(root, "good", "stc_main"))
     assert gates.evaluate_gate_4([good])["status"] == "PASS"
 
 

@@ -103,6 +103,20 @@ def test_gate_1_fail_unknown_generator():
     assert gates.evaluate_gate_1([run])["status"] == "FAIL"
 
 
+def test_gate_1_fail_cross_scenario_splice():
+    # straight_hold from one scenario + comm_waypoint from another is not a
+    # valid single-scenario segment comparison
+    from experiment import run_stc_gates as gates
+    root = Path(tempfile.mkdtemp())
+    sh = _segment_record("straight_hold")
+    sh.update({"uav_num": 2, "map_seed": 1, "task_seed": 1})
+    cw = _segment_record("comm_waypoint")
+    cw.update({"uav_num": 2, "map_seed": 2, "task_seed": 1})
+    run = gates.load_run(_write_run(root, "seg", "stc_segment_gate",
+                                    {"records.json": [sh, cw]}))
+    assert gates.evaluate_gate_1([run])["status"] == "FAIL"
+
+
 # --------------------------------------------------------------------------- #
 # Gate 2: forged RQ2 method names are rejected
 # --------------------------------------------------------------------------- #
@@ -177,8 +191,33 @@ def test_gate_3_fail_disjoint_method_seeds():
 
 # --------------------------------------------------------------------------- #
 # Gate 4: fake git identity / empty input hash / unrelated artifact hash /
-#         reporting bundle
+#         forged config / reporting bundle
 # --------------------------------------------------------------------------- #
+
+def _write_valid_run(root, run_id, experiment="stc_main"):
+    """A fully valid sealed run matching the provenance contract."""
+    from experiment.run_stc_gates import EXPERIMENT_EXPECTED, EXPERIMENT_REQUIRED_INPUTS
+    run_dir = root / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    expected = sorted(EXPERIMENT_EXPECTED[experiment])
+    hashes = {}
+    for name in expected:
+        data = json.dumps({}, sort_keys=True).encode("utf-8")
+        (run_dir / name).write_bytes(data)
+        hashes[name] = _sha256(data)
+    config = {"uav_nums": [2], "smoke": True}
+    canonical = hashlib.sha256(
+        json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
+    manifest = {
+        "run_id": run_id, "experiment": experiment, "status": "success",
+        "git": {"head": "a" * 40},
+        "inputs": {k: "a" * 64 for k in sorted(EXPERIMENT_REQUIRED_INPUTS[experiment])},
+        "hashes": hashes, "expected": expected,
+        "config": config, "config_sha256": canonical,
+    }
+    (run_dir / "manifest.json").write_text(json.dumps(manifest, sort_keys=True))
+    return run_dir
+
 
 def test_gate_4_fail_fake_git_identity():
     from experiment import run_stc_gates as gates
@@ -206,11 +245,31 @@ def test_gate_4_fail_unrelated_artifact_hash():
     assert gates.evaluate_gate_4([run])["status"] == "FAIL"
 
 
+def test_gate_4_fail_unrelated_artifacts():
+    # a manifest declaring the wrong expected-artifact set is not authentic
+    from experiment import run_stc_gates as gates
+    root = Path(tempfile.mkdtemp())
+    run = gates.load_run(_write_run(root, "r", "stc_main", {"forged.json": {}},
+                                    inputs={"scenario": "a" * 64}))
+    assert gates.evaluate_gate_4([run])["status"] == "FAIL"
+
+
+def test_gate_4_fail_forged_config_sha():
+    # a format-correct config_sha256 that does not match the config is rejected
+    from experiment import run_stc_gates as gates
+    root = Path(tempfile.mkdtemp())
+    run_dir = _write_valid_run(root, "r", "stc_main")
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+    manifest["config_sha256"] = "b" * 64
+    (run_dir / "manifest.json").write_text(json.dumps(manifest, sort_keys=True))
+    run = gates.load_run(run_dir)
+    assert gates.evaluate_gate_4([run])["status"] == "FAIL"
+
+
 def test_gate_4_fail_missing_reporting_bundle():
     from experiment import run_stc_gates as gates
     root = Path(tempfile.mkdtemp())
-    run = gates.load_run(_write_run(root, "r", "stc_main", {"summary.json": {}},
-                                    inputs={"scenario": "a" * 64}))
+    run = gates.load_run(_write_valid_run(root, "r", "stc_main"))
     result = gates.evaluate_gate_4([run], reporting_bundle_path="missing.json")
     assert result["status"] == "FAIL"
 
@@ -218,11 +277,25 @@ def test_gate_4_fail_missing_reporting_bundle():
 def test_gate_4_fail_empty_reporting_bundle(tmp_path):
     from experiment import run_stc_gates as gates
     root = Path(tempfile.mkdtemp())
-    run = gates.load_run(_write_run(root, "r", "stc_main", {"summary.json": {}},
-                                    inputs={"scenario": "a" * 64}))
+    run = gates.load_run(_write_valid_run(root, "r", "stc_main"))
     bundle = tmp_path / "reporting_bundle.json"
     bundle.write_text(json.dumps({"figures": {}}))
     result = gates.evaluate_gate_4([run], reporting_bundle_path=str(bundle))
+    assert result["status"] == "FAIL"
+
+
+def test_gate_4_fail_tampered_figure_hash(tmp_path):
+    # a bundle whose figure hash does not match the actual figure file is rejected
+    from experiment import run_stc_gates as gates
+    root = Path(tempfile.mkdtemp())
+    run = gates.load_run(_write_valid_run(root, "r", "stc_main"))
+    fig_dir = tmp_path / "figs"
+    fig_dir.mkdir()
+    (fig_dir / "f.png").write_bytes(b"real-figure-bytes")
+    bundle = {"figures": {"f.png": {"sha256": "a" * 64, "bytes": 1}}}
+    (fig_dir / "reporting_bundle.json").write_text(json.dumps(bundle))
+    result = gates.evaluate_gate_4(
+        [run], reporting_bundle_path=str(fig_dir / "reporting_bundle.json"))
     assert result["status"] == "FAIL"
 
 

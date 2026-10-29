@@ -56,6 +56,31 @@ SEQUENCE_METHODS = frozenset({
 # RQ3 approximation modes reported by the evaluator audit.
 AUDIT_MODES = frozenset({"independent", "static_factor"})
 
+# Per-experiment provenance contract: the exact expected artifacts and the
+# minimum registered inputs a sealed run of each experiment MUST declare.  A
+# manifest that declares a different artifact set (unrelated artifacts) or omits
+# a required input is not authentic evidence.
+EXPERIMENT_EXPECTED = {
+    "stc_main": frozenset({"resolved_config.json", "raw_records.json",
+                           "solutions.json", "timelines.json", "summary.json",
+                           "rq2.json"}),
+    "stc_segment_gate": frozenset({"resolved_config.json", "records.json",
+                                   "summary.json"}),
+    "stc_evaluator_audit": frozenset({"resolved_config.json", "records.json",
+                                      "summary.json"}),
+    "stc_ablation": frozenset({"resolved_config.json", "records.json",
+                               "summary.json"}),
+    "stc_scale": frozenset({"resolved_config.json", "records.json",
+                            "summary.json"}),
+}
+EXPERIMENT_REQUIRED_INPUTS = {
+    "stc_main": frozenset({"config_file", "resolved_config"}),
+    "stc_segment_gate": frozenset({"resolved_config"}),
+    "stc_evaluator_audit": frozenset({"resolved_config"}),
+    "stc_ablation": frozenset({"resolved_config"}),
+    "stc_scale": frozenset({"resolved_config"}),
+}
+
 
 @dataclass
 class LoadedRun:
@@ -70,6 +95,11 @@ class LoadedRun:
 
 def _sha256(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def _canonical_sha256(obj):
+    """The canonical content hash RunContext stamps into ``config_sha256``."""
+    return hashlib.sha256(json.dumps(obj, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def load_run(run_dir):
@@ -262,35 +292,8 @@ def evaluate_gate_0(tests_exit_code):
     return _gate(FAIL, "full test suite failed (pytest exit %d)" % tests_exit_code)
 
 
-def evaluate_gate_1(segment_runs):
-    """Gate 1: segment-layer evidence.
-
-    Requires BOTH a straight-hold baseline and at least one communication-aware
-    generator (finite feasibility), plus a real common-feasible edge
-    intersection: the reported common-feasible IDs must be present in every
-    evaluated generator's per-edge records with ``feasible`` true, and each
-    generator must cover the full edge set (``n_edges`` == ``len(per_edge)``).
-    A lone communication-aware record (no straight-hold baseline) is NOT
-    evidence.
-    """
-    if not segment_runs:
-        return _gate(NOT_RUN, "no stc_segment_gate run found")
-    valid = [r for r in segment_runs if _ok(r)]
-    if not valid:
-        return _gate(FAIL, "stc_segment_gate run present but not finalized/valid",
-                     ["%s: %s" % (r.run_id, "; ".join(r.problems))
-                      for r in segment_runs if r.problems])
-
-    evaluated = {}
-    for run in valid:
-        for rec in (run.artifacts.get("records.json") or []):
-            if not isinstance(rec, dict) or rec.get("status") != "evaluated":
-                continue
-            gen = rec.get("generator")
-            if gen is None or not _finite(rec.get("feasible_frac")):
-                continue  # NaN / missing feasibility is not evidence
-            evaluated[gen] = rec
-
+def _gate_1_scenario(evaluated):
+    """Validate one scenario's evaluated generators; return (problems, gens)."""
     problems = []
     # generator names must be registered (deterministic families or a drl: label)
     for gen in evaluated:
@@ -339,12 +342,51 @@ def evaluate_gate_1(segment_runs):
             problems.append("no common-feasible edge intersection (T/D/O not comparable)")
         elif not declared_sets or any(d != common for d in declared_sets):
             problems.append("common-feasible edge IDs inconsistent with per-edge records")
+    return problems, sorted(evaluated)
 
-    if problems:
-        return _gate(FAIL, "; ".join(problems), sorted(evaluated))
-    return _gate(PASS,
-                 "%d generator(s) with a real common-feasible edge intersection"
-                 % len(evaluated), sorted(evaluated))
+
+def evaluate_gate_1(segment_runs):
+    """Gate 1: segment-layer evidence, validated WITHIN a single scenario.
+
+    Requires BOTH a straight-hold baseline and at least one communication-aware
+    generator (finite feasibility), plus a real common-feasible edge
+    intersection, for at least one scenario.  Evidence is never spliced across
+    scenarios (a straight-hold from one scenario + a comm-aware generator from
+    another is not a valid segment comparison).
+    """
+    if not segment_runs:
+        return _gate(NOT_RUN, "no stc_segment_gate run found")
+    valid = [r for r in segment_runs if _ok(r)]
+    if not valid:
+        return _gate(FAIL, "stc_segment_gate run present but not finalized/valid",
+                     ["%s: %s" % (r.run_id, "; ".join(r.problems))
+                      for r in segment_runs if r.problems])
+
+    by_scen = {}
+    for run in valid:
+        for rec in (run.artifacts.get("records.json") or []):
+            if not isinstance(rec, dict) or rec.get("status") != "evaluated":
+                continue
+            gen = rec.get("generator")
+            if gen is None or not _finite(rec.get("feasible_frac")):
+                continue  # NaN / missing feasibility is not evidence
+            scen = (rec.get("uav_num"), rec.get("map_seed"), rec.get("task_seed"))
+            by_scen.setdefault(scen, {})[gen] = rec
+
+    if not by_scen:
+        return _gate(FAIL, "no evaluated segment generators with finite feasibility")
+
+    best = None  # (n_problems, problems, gens) for the most-complete scenario
+    for scen, evaluated in by_scen.items():
+        problems, gens = _gate_1_scenario(evaluated)
+        if not problems:
+            return _gate(PASS,
+                         "%d generator(s) with a real common-feasible edge "
+                         "intersection in one scenario" % len(evaluated), gens)
+        if best is None or len(problems) < best[0]:
+            best = (len(problems), problems, gens)
+
+    return _gate(FAIL, "; ".join(best[1]), best[2])
 
 
 def _rq2_valid(run):
@@ -492,8 +534,13 @@ def evaluate_gate_3(main_runs, ablation_runs):
 
 
 def _valid_reporting_bundle(path):
-    """Return ``True`` for a valid non-empty reporting bundle, ``False`` for an
-    invalid/empty one, ``None`` when absent."""
+    """Return ``True`` for a valid, tamper-evident non-empty reporting bundle,
+    ``False`` for an invalid/empty one, ``None`` when absent.
+
+    Every figure's recorded SHA-256 and byte length are re-verified against the
+    actual figure file, so a bundle whose hashes are merely format-correct (but
+    do not match the real figures) is rejected.
+    """
     path = Path(path)
     if not path.is_file():
         return None
@@ -509,6 +556,12 @@ def _valid_reporting_bundle(path):
     for name, info in figures.items():
         if not isinstance(info, dict) or not _valid_sha256(info.get("sha256")) \
                 or not isinstance(info.get("bytes"), int) or info["bytes"] <= 0:
+            return False
+        fig_path = path.parent / name
+        if not fig_path.is_file():
+            return False
+        data = fig_path.read_bytes()
+        if _sha256(data) != info["sha256"] or len(data) != info["bytes"]:
             return False
     return True
 
@@ -544,6 +597,23 @@ def evaluate_gate_4(all_runs, reporting_bundle_path=None):
         hashes = run.manifest.get("hashes") or {}
         if not hashes:
             problems.append("%s: no artifact hashes recorded" % run.run_id)
+        # the declared experiment must be a known runner with an exact expected
+        # artifact contract (an unrelated artifact set is not authentic)
+        experiment = run.experiment
+        if experiment not in EXPERIMENT_EXPECTED:
+            problems.append("%s: unknown experiment %r" % (run.run_id, experiment))
+        else:
+            expected_set = set(expected)
+            declared = EXPERIMENT_EXPECTED[experiment]
+            if expected_set != declared:
+                problems.append("%s: expected artifacts %s do not match the %s "
+                                "contract %s"
+                                % (run.run_id, sorted(expected_set), experiment,
+                                   sorted(declared)))
+            missing_inputs = EXPERIMENT_REQUIRED_INPUTS[experiment] - set(inputs)
+            if missing_inputs:
+                problems.append("%s: missing required input hash(es): %s"
+                                % (run.run_id, ", ".join(sorted(missing_inputs))))
         # expected artifacts and recorded hashes must correspond exactly, so an
         # unverifiable expected artifact (or a hash for a non-artifact) cannot
         # slip through as "sealed"
@@ -555,6 +625,16 @@ def evaluate_gate_4(all_runs, reporting_bundle_path=None):
         if extra:
             problems.append("%s: recorded hash for a non-expected artifact: %s"
                             % (run.run_id, ", ".join(sorted(extra))))
+        # the resolved config hash must match the recorded config (a forged
+        # config_sha256 that is merely format-correct is not authentic)
+        config = run.manifest.get("config")
+        config_sha = run.manifest.get("config_sha256")
+        if config is None or not _valid_sha256(config_sha):
+            problems.append("%s: missing/invalid config_sha256 (config not "
+                            "authenticated)" % run.run_id)
+        elif _canonical_sha256(config) != config_sha:
+            problems.append("%s: config_sha256 does not match the recorded config"
+                            % run.run_id)
     if problems:
         return _gate(FAIL, "; ".join(problems))
     if reporting_bundle_path is not None:
