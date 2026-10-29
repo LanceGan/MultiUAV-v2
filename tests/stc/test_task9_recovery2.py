@@ -223,7 +223,7 @@ def test_main_preserves_partial_records_on_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "_build_context", fake_build)
     monkeypatch.setattr(main, "_run_scenario", fake_run)
     monkeypatch.setattr(main, "run_rq2",
-                        lambda scn, field, lib, spec, seed=42:
+                        lambda scn, field, lib, spec, seed=42, checkpoint=None:
                         {"assignment": [], "sequence": []})
 
     config = tmp_path / "config.json"

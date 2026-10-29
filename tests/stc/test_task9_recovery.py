@@ -171,7 +171,19 @@ def test_segment_gate_common_feasible_edges():
 # 6. RQ2 wiring + Shortest-Balanced assignment
 # --------------------------------------------------------------------------- #
 
-def test_rq2_includes_shortest_balanced():
+@pytest.fixture
+def rq2_constant_radio(monkeypatch):
+    # The tiny constant-field scenario must also reach the legacy sequence
+    # adapters; their real map builder only supports integer-kilometre regions.
+    from sequence import radio_path
+    from segment.stc import sequencing
+    monkeypatch.setattr(sequencing, "_configure_maps", lambda sc: "const-field")
+    monkeypatch.setattr(radio_path.radio_map_A2G, "getPointDateRate", lambda loc: 10.0)
+    monkeypatch.setattr(radio_path.radio_map_G2A, "getPointMiniOutage",
+                        lambda loc: ([0.1], [10.0]))
+
+
+def test_rq2_includes_shortest_balanced(rq2_constant_radio):
     from experiment import run_stc_main as main
     from segment.stc.library import build_all_pairs_library
     from segment.stc.evaluator import default_objective_spec
@@ -186,7 +198,7 @@ def test_rq2_includes_shortest_balanced():
     assert "shortest_balanced" in assign_methods
 
 
-def test_main_writes_rq2_artifact(monkeypatch, tmp_path):
+def test_main_writes_rq2_artifact(monkeypatch, tmp_path, rq2_constant_radio):
     from experiment import run_stc_main as main
     from segment.stc.types import RadioSample
 

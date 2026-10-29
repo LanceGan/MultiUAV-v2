@@ -378,7 +378,7 @@ def _run_scenario(sc, field, library, reference, sac_result,
     return records, solutions, timelines
 
 
-def run_rq2(scenario, field, library, objective_spec, seed=42):
+def run_rq2(scenario, field, library, objective_spec, seed=42, checkpoint=None):
     """RQ2: assignment-method and sequence-method value under a fixed
     segment/evaluator path (Task 9 Step 2).
 
@@ -387,6 +387,8 @@ def run_rq2(scenario, field, library, objective_spec, seed=42):
     (distance, Jia time-energy, GA-EQTSP, library-aware) are compared with a
     fixed library-aware-EBTAS assignment.  Every plan is scored through the
     SAME :class:`ObjectiveSpec` and the authoritative synchronous evaluator.
+    ``checkpoint`` receives the partial payload after every completed or failed
+    method, before another method runs or an execution exception propagates.
     """
     from experiment.stc_common import seg_view
     from segment.stc.assignment import (
@@ -435,12 +437,26 @@ def run_rq2(scenario, field, library, objective_spec, seed=42):
                 "makespan_s": float(res.makespan_s),
                 "total_delay_s": float(res.total_delay_s)}
 
-    def _unavailable(method, layer, exc):
-        return {"method": method, "layer": layer, "status": "unavailable",
-                "failure_reason": repr(exc), "feasible": None,
-                "objective": None, "makespan_s": None, "total_delay_s": None}
+    def _failed(method, layer, exc):
+        return {"method": method, "layer": layer, "status": "failed",
+                "failure_reason": repr(exc), "failure_type": type(exc).__name__,
+                "interrupted": isinstance(exc, KeyboardInterrupt),
+                "availability_declared": False, "evaluator_calls": None,
+                "seed": seed, "uav_num": scenario.n_uav,
+                "map_seed": scenario.map_seed, "task_seed": scenario.task_seed,
+                "feasible": None, "objective": None, "makespan_s": None,
+                "total_delay_s": None}
 
-    assignment_records = []
+    payload = {"assignment": [], "sequence": [],
+               "summary": {"n_assignment": 0, "n_sequence": 0}}
+
+    def _record(rec):
+        layer = rec["layer"]
+        payload[layer].append(rec)
+        payload["summary"]["n_" + layer] = len(payload[layer])
+        if checkpoint is not None:
+            checkpoint(payload)
+
     assign_methods = {
         "region_partition": lambda: region_partition(scenario, seed=seed),
         "spatial_kmeans": lambda: spatial_kmeans(scenario, seed=seed),
@@ -455,12 +471,18 @@ def run_rq2(scenario, field, library, objective_spec, seed=42):
                       for cluster in assign.clusters]
             rec = _evaluate(routes)
             rec.update({"method": name, "layer": "assignment"})
-            assignment_records.append(rec)
-        except Exception as exc:
-            assignment_records.append(_unavailable(name, "assignment", exc))
+        except (Exception, KeyboardInterrupt) as exc:
+            _record(_failed(name, "assignment", exc))
+            raise
+        _record(rec)
 
-    sequence_records = []
-    base_assign = library_aware_ebtas(scenario, seg, seed=seed)
+    try:
+        base_assign = library_aware_ebtas(scenario, seg, seed=seed)
+    except (Exception, KeyboardInterrupt) as exc:
+        rec = _failed("library_aware_ebtas", "sequence", exc)
+        rec["phase"] = "base_assignment"
+        _record(rec)
+        raise
     seq_methods = {
         "distance_nn_2opt": lambda ids: distance_nn_2opt(scenario, ids, seed=seed),
         "jia_time_energy_tsp": lambda ids: jia_time_energy_tsp(scenario, ids, seed=seed),
@@ -472,13 +494,12 @@ def run_rq2(scenario, field, library, objective_spec, seed=42):
             routes = [fn(cluster).route for cluster in base_assign.clusters]
             rec = _evaluate(routes)
             rec.update({"method": name, "layer": "sequence"})
-            sequence_records.append(rec)
-        except Exception as exc:
-            sequence_records.append(_unavailable(name, "sequence", exc))
+        except (Exception, KeyboardInterrupt) as exc:
+            _record(_failed(name, "sequence", exc))
+            raise
+        _record(rec)
 
-    return {"assignment": assignment_records, "sequence": sequence_records,
-            "summary": {"n_assignment": len(assignment_records),
-                        "n_sequence": len(sequence_records)}}
+    return payload
 
 
 def _assert_coverage(records, cfg):
@@ -550,11 +571,16 @@ def main(argv=None):
                                             task_seed, cfg, rc,
                                             checkpoint=_checkpoint_method)
             # RQ2: assignment/sequence value on the SAME context (recovery #6).
-            rq2 = run_rq2(sc, field, library.candidates, reference,
-                          seed=map_seed)
-            rq2.update({"uav_num": uav_num, "map_seed": map_seed,
-                        "task_seed": task_seed})
+            rq2 = {"uav_num": uav_num, "map_seed": map_seed,
+                   "task_seed": task_seed}
             rq2_records.append(rq2)
+
+            def _checkpoint_rq2(partial):
+                rq2.update(partial)
+                rc.write_bytes("rq2.json", _json_bytes(rq2_records))
+
+            rq2.update(run_rq2(sc, field, library.candidates, reference,
+                               seed=map_seed, checkpoint=_checkpoint_rq2))
             _persist_partial()   # incremental checkpoint after each scenario
         _assert_coverage(records, cfg)
 
