@@ -65,13 +65,13 @@ EXPERIMENT_EXPECTED = {
                            "solutions.json", "timelines.json", "summary.json",
                            "rq2.json"}),
     "stc_segment_gate": frozenset({"resolved_config.json", "records.json",
-                                   "summary.json"}),
+                                   "summary.json", "progress.json"}),
     "stc_evaluator_audit": frozenset({"resolved_config.json", "records.json",
-                                      "summary.json"}),
+                                      "summary.json", "progress.json"}),
     "stc_ablation": frozenset({"resolved_config.json", "records.json",
-                               "summary.json"}),
+                               "summary.json", "progress.json"}),
     "stc_scale": frozenset({"resolved_config.json", "records.json",
-                            "summary.json"}),
+                            "summary.json", "progress.json"}),
 }
 EXPERIMENT_REQUIRED_INPUTS = {
     "stc_main": frozenset({"config_file", "resolved_config"}),
@@ -293,22 +293,26 @@ def evaluate_gate_0(tests_exit_code):
 
 
 def _gate_1_scenario(evaluated):
-    """Validate one scenario's evaluated generators; return (problems, gens)."""
-    problems = []
-    # generator names must be registered (deterministic families or a drl: label)
+    """Validate one scenario's evaluated generators.
+
+    Returns ``(auth_problems, complete_problems, gens)``.  ``auth_problems`` are
+    authenticity failures (forged generator names, self-loops / forged edges,
+    incomplete coverage, inconsistent common IDs) that invalidate the evidence
+    in ANY scenario.  ``complete_problems`` are per-scenario completeness
+    failures (missing baseline / comm-aware / empty common intersection); at
+    least one scenario must have none.
+    """
+    auth = []
+    complete = []
     for gen in evaluated:
         if gen not in DETERMINISTIC_GENERATORS and not gen.startswith("drl:"):
-            problems.append("unknown generator %s" % gen)
+            auth.append("unknown generator %s" % gen)
     if "straight_hold" not in evaluated:
-        problems.append("no straight_hold baseline evaluated")
+        complete.append("no straight_hold baseline evaluated")
     comm_aware = [g for g in evaluated if g != "straight_hold"]
     if not comm_aware:
-        problems.append("no communication-aware generator evaluated")
+        complete.append("no communication-aware generator evaluated")
 
-    # the common-feasible edge IDs must be real (feasible in every generator's
-    # per-edge records), every generator must cover the full legal edge set (no
-    # self-loops / forged edges), and every generator must declare the SAME
-    # intersection
     common = None
     declared_sets = []
     n_tasks = None
@@ -316,21 +320,21 @@ def _gate_1_scenario(evaluated):
         per_edge = rec.get("per_edge") or []
         n_edges = rec.get("n_edges")
         if not per_edge or n_edges is None or len(per_edge) != n_edges:
-            problems.append("generator %s per-edge coverage incomplete" % gen)
+            auth.append("generator %s per-edge coverage incomplete" % gen)
             continue
         k = _infer_n_tasks(n_edges)
         if k is None:
-            problems.append("generator %s n_edges is not K(K+1)" % gen)
+            auth.append("generator %s n_edges is not K(K+1)" % gen)
             continue
         if n_tasks is None:
             n_tasks = k
         elif n_tasks != k:
-            problems.append("generators disagree on the scenario size")
+            auth.append("generators disagree on the scenario size")
         edge_ids = {tuple(pe["edge"]) for pe in per_edge
                     if isinstance(pe, dict) and "edge" in pe}
         if edge_ids != _legal_edge_set(k):
-            problems.append("generator %s per-edge set is not the legal edge set "
-                            "(self-loops / forged edges)" % gen)
+            auth.append("generator %s per-edge set is not the legal edge set "
+                        "(self-loops / forged edges)" % gen)
             continue
         feasible_ids = {tuple(pe["edge"]) for pe in per_edge
                         if isinstance(pe, dict) and pe.get("feasible")}
@@ -339,20 +343,21 @@ def _gate_1_scenario(evaluated):
     common = common or set()
     if evaluated:
         if not common:
-            problems.append("no common-feasible edge intersection (T/D/O not comparable)")
+            complete.append("no common-feasible edge intersection (T/D/O not comparable)")
         elif not declared_sets or any(d != common for d in declared_sets):
-            problems.append("common-feasible edge IDs inconsistent with per-edge records")
-    return problems, sorted(evaluated)
+            auth.append("common-feasible edge IDs inconsistent with per-edge records")
+    return auth, complete, sorted(evaluated)
 
 
 def evaluate_gate_1(segment_runs):
-    """Gate 1: segment-layer evidence, validated WITHIN a single scenario.
+    """Gate 1: segment-layer evidence, validated per scenario.
 
-    Requires BOTH a straight-hold baseline and at least one communication-aware
-    generator (finite feasibility), plus a real common-feasible edge
-    intersection, for at least one scenario.  Evidence is never spliced across
-    scenarios (a straight-hold from one scenario + a comm-aware generator from
-    another is not a valid segment comparison).
+    Any authenticity failure (forged generator, self-loop / forged edge,
+    incomplete coverage, inconsistent common IDs) in ANY scenario fails the
+    gate — it is never masked by a valid scenario elsewhere.  At least one
+    scenario must also be complete (straight-hold baseline + a communication-
+    aware generator + a non-empty common-feasible intersection), and evidence is
+    never spliced across scenarios.
     """
     if not segment_runs:
         return _gate(NOT_RUN, "no stc_segment_gate run found")
@@ -376,17 +381,27 @@ def evaluate_gate_1(segment_runs):
     if not by_scen:
         return _gate(FAIL, "no evaluated segment generators with finite feasibility")
 
-    best = None  # (n_problems, problems, gens) for the most-complete scenario
+    auth_problems = []
+    any_complete = False
+    gens = []
     for scen, evaluated in by_scen.items():
-        problems, gens = _gate_1_scenario(evaluated)
-        if not problems:
-            return _gate(PASS,
-                         "%d generator(s) with a real common-feasible edge "
-                         "intersection in one scenario" % len(evaluated), gens)
-        if best is None or len(problems) < best[0]:
-            best = (len(problems), problems, gens)
+        auth, complete, g = _gate_1_scenario(evaluated)
+        auth_problems.extend(auth)
+        gens.extend(g)
+        if not complete:
+            any_complete = True
 
-    return _gate(FAIL, "; ".join(best[1]), best[2])
+    if auth_problems:
+        return _gate(FAIL, "; ".join(dict.fromkeys(auth_problems)),
+                     sorted(set(gens)))
+    if not any_complete:
+        return _gate(FAIL, "no scenario has complete segment evidence "
+                           "(straight-hold baseline + communication-aware "
+                           "generator + common-feasible intersection)",
+                     sorted(set(gens)))
+    return _gate(PASS,
+                 "%d scenario(s) with real segment evidence" % len(by_scen),
+                 sorted(set(gens)))
 
 
 def _rq2_valid(run):
@@ -533,13 +548,15 @@ def evaluate_gate_3(main_runs, ablation_runs):
     ])
 
 
-def _valid_reporting_bundle(path):
+def _valid_reporting_bundle(path, runs):
     """Return ``True`` for a valid, tamper-evident non-empty reporting bundle,
     ``False`` for an invalid/empty one, ``None`` when absent.
 
-    Every figure's recorded SHA-256 and byte length are re-verified against the
-    actual figure file, so a bundle whose hashes are merely format-correct (but
-    do not match the real figures) is rejected.
+    Verified: every figure's recorded SHA-256/byte length against the actual
+    figure file; the bundle's ``provenance_sha256`` against the actual
+    ``figures_provenance.json``; and the provenance's run ids + input hashes
+    against the gated runs (so a bundle self-reporting arbitrary file hashes or
+    omitting the provenance/run/input association is rejected).
     """
     path = Path(path)
     if not path.is_file():
@@ -563,6 +580,35 @@ def _valid_reporting_bundle(path):
         data = fig_path.read_bytes()
         if _sha256(data) != info["sha256"] or len(data) != info["bytes"]:
             return False
+
+    # the bundle must chain to a real figures_provenance.json and to the gated
+    # runs' input hashes, not merely self-report figure hashes
+    prov_path = path.parent / "figures_provenance.json"
+    if not prov_path.is_file():
+        return False
+    prov_sha = bundle.get("provenance_sha256")
+    if not _valid_sha256(prov_sha) or _sha256(prov_path.read_bytes()) != prov_sha:
+        return False
+    try:
+        provenance = json.loads(prov_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(provenance, dict) or not provenance:
+        return False
+    run_inputs = {r.run_id: r.manifest.get("inputs", {}) for r in runs}
+    for prov in provenance.values():
+        if not isinstance(prov, dict):
+            return False
+        run_ids = prov.get("runs")
+        inputs = prov.get("inputs")
+        if not isinstance(run_ids, list) or not run_ids \
+                or not isinstance(inputs, dict):
+            return False
+        for rid in run_ids:
+            if rid not in run_inputs:
+                return False
+            if inputs.get(rid) != run_inputs[rid]:
+                return False
     return True
 
 
@@ -635,10 +681,18 @@ def evaluate_gate_4(all_runs, reporting_bundle_path=None):
         elif _canonical_sha256(config) != config_sha:
             problems.append("%s: config_sha256 does not match the recorded config"
                             % run.run_id)
+        # the resolved_config input hash must equal the actual resolved_config.json
+        # artifact (whose hash load_run already verified against the file bytes),
+        # so a merely format-correct a×64 input hash is rejected
+        if "resolved_config" in inputs:
+            artifact_hash = hashes.get("resolved_config.json")
+            if artifact_hash is None or inputs["resolved_config"] != artifact_hash:
+                problems.append("%s: resolved_config input hash does not match "
+                                "resolved_config.json" % run.run_id)
     if problems:
         return _gate(FAIL, "; ".join(problems))
     if reporting_bundle_path is not None:
-        bundle_state = _valid_reporting_bundle(reporting_bundle_path)
+        bundle_state = _valid_reporting_bundle(reporting_bundle_path, all_runs)
         if bundle_state is None:
             return _gate(FAIL, "reporting bundle missing",
                          [str(reporting_bundle_path)])

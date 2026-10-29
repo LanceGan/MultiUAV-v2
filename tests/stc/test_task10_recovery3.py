@@ -208,10 +208,13 @@ def _write_valid_run(root, run_id, experiment="stc_main"):
     config = {"uav_nums": [2], "smoke": True}
     canonical = hashlib.sha256(
         json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
+    inputs = {k: "a" * 64 for k in sorted(EXPERIMENT_REQUIRED_INPUTS[experiment])}
+    if "resolved_config" in inputs:
+        inputs["resolved_config"] = hashes["resolved_config.json"]
     manifest = {
         "run_id": run_id, "experiment": experiment, "status": "success",
         "git": {"head": "a" * 40},
-        "inputs": {k: "a" * 64 for k in sorted(EXPERIMENT_REQUIRED_INPUTS[experiment])},
+        "inputs": inputs,
         "hashes": hashes, "expected": expected,
         "config": config, "config_sha256": canonical,
     }
@@ -297,6 +300,61 @@ def test_gate_4_fail_tampered_figure_hash(tmp_path):
     result = gates.evaluate_gate_4(
         [run], reporting_bundle_path=str(fig_dir / "reporting_bundle.json"))
     assert result["status"] == "FAIL"
+
+
+def test_gate_4_fail_forged_resolved_config_input():
+    # a format-correct a×64 resolved_config input hash that does not match the
+    # actual resolved_config.json is rejected
+    from experiment import run_stc_gates as gates
+    root = Path(tempfile.mkdtemp())
+    run_dir = _write_valid_run(root, "r", "stc_main")
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+    manifest["inputs"]["resolved_config"] = "a" * 64
+    (run_dir / "manifest.json").write_text(json.dumps(manifest, sort_keys=True))
+    run = gates.load_run(run_dir)
+    assert gates.evaluate_gate_4([run])["status"] == "FAIL"
+
+
+def test_gate_4_fail_bundle_missing_provenance(tmp_path):
+    # a bundle whose figures match real files but which has no provenance chain
+    # (no figures_provenance.json) is rejected
+    from experiment import run_stc_gates as gates
+    root = Path(tempfile.mkdtemp())
+    run = gates.load_run(_write_valid_run(root, "r", "stc_main"))
+    fig_dir = tmp_path / "figs"
+    fig_dir.mkdir()
+    data = b"real-figure-bytes"
+    (fig_dir / "f.png").write_bytes(data)
+    bundle = {"figures": {"f.png": {"sha256": _sha256(data), "bytes": len(data)}},
+              "provenance_sha256": "a" * 64, "n_figures": 1}
+    (fig_dir / "reporting_bundle.json").write_text(json.dumps(bundle))
+    result = gates.evaluate_gate_4(
+        [run], reporting_bundle_path=str(fig_dir / "reporting_bundle.json"))
+    assert result["status"] == "FAIL"
+
+
+def test_gate_1_fail_masked_illegal_scenario():
+    # a valid scenario must not mask an illegal (self-loop) scenario elsewhere
+    from experiment import run_stc_gates as gates
+    root = Path(tempfile.mkdtemp())
+    sh = _segment_record("straight_hold")
+    sh.update({"uav_num": 2, "map_seed": 1, "task_seed": 1})
+    cw = _segment_record("comm_waypoint")
+    cw.update({"uav_num": 2, "map_seed": 1, "task_seed": 1})
+    self_loop = [{"edge": [-1, 0], "feasible": True},
+                 {"edge": [0, 0], "feasible": True},  # self-loop
+                 {"edge": [0, 1], "feasible": True},
+                 {"edge": [1, 0], "feasible": True},
+                 {"edge": [0, 2], "feasible": True},
+                 {"edge": [1, 2], "feasible": True}]
+    sh2 = _segment_record("straight_hold", per_edge=self_loop,
+                          common_feasible_edges=[[-1, 0]])
+    sh2.update({"uav_num": 2, "map_seed": 2, "task_seed": 1})
+    cw2 = _segment_record("comm_waypoint")
+    cw2.update({"uav_num": 2, "map_seed": 2, "task_seed": 1})
+    run = gates.load_run(_write_run(root, "seg", "stc_segment_gate",
+                                    {"records.json": [sh, cw, sh2, cw2]}))
+    assert gates.evaluate_gate_1([run])["status"] == "FAIL"
 
 
 # --------------------------------------------------------------------------- #

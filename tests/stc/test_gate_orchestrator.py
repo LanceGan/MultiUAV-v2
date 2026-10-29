@@ -353,10 +353,13 @@ def _write_valid_run(root, run_id, experiment="stc_main"):
     config = {"uav_nums": [2], "smoke": True}
     canonical = hashlib.sha256(
         json.dumps(config, sort_keys=True).encode("utf-8")).hexdigest()
+    inputs = {k: "a" * 64 for k in sorted(EXPERIMENT_REQUIRED_INPUTS[experiment])}
+    if "resolved_config" in inputs:
+        inputs["resolved_config"] = hashes["resolved_config.json"]
     manifest = {
         "run_id": run_id, "experiment": experiment, "status": "success",
         "git": {"head": "a" * 40},
-        "inputs": {k: "a" * 64 for k in sorted(EXPERIMENT_REQUIRED_INPUTS[experiment])},
+        "inputs": inputs,
         "hashes": hashes, "expected": expected,
         "config": config, "config_sha256": canonical,
     }
