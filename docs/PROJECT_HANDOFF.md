@@ -78,13 +78,13 @@ Task 10 覆盖 Gate、绘图、冻结与报告证据。历史加固提交：
 3. 报告 bundle 不校验图件↔provenance 条目对应 → 要求精确相等；
 4. 绘图 `check_compatible` 只覆盖 stc_main → 推广到 ablation/scale/segment。
 
-注意：第四轮修复由复审者本人实施，**Task 10 的最终验收由项目负责人决定**。在验收
-确认前仍维持：
+注意：第四轮修复由复审者本人实施。**项目负责人已于 2026-10-31 确认验收 Task 10**。
+在 bounded pilot 报告获批前仍维持：
 
 - 不将现有 `results/runs/` 开发/冒烟产物作为论文实验结论。
 - 不启动正式多 seed 矩阵。
 
-验收后的下一步：按第 8 节准备 bounded pilot 方案并报批。
+下一步：按 [bounded pilot 方案](stc-pilot-plan.md) 执行 pilot 并报批。
 
 ## 6. 运行环境与常用命令
 
