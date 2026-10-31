@@ -44,8 +44,9 @@ Gate 0–4 机器可读报告」整条证据链在本参考机（macOS arm64，`
 ./.venv/bin/python experiment/run_stc_segment_gate.py --smoke --method-seeds 0 --timeout-s 1800 --run-id pilot-rq1
 # ② RQ3 评价器审计（独立/静态/同步误差）
 ./.venv/bin/python experiment/run_stc_evaluator_audit.py --smoke --method-seeds 0 --timeout-s 1800 --run-id pilot-rq3
-# ③ RQ2+RQ4 六系统方法 + 分配/排序对比
-./.venv/bin/python experiment/run_stc_main.py --smoke --method-seeds 0 --timeout-s 3600 --run-id pilot-rq2rq4
+# ③ RQ2+RQ4 六系统方法 + 分配/排序对比（run_stc_main 无 --timeout-s 参数，
+#    运行时长由 smoke 规模 + ALNS 迭代数自然限定）
+./.venv/bin/python experiment/run_stc_main.py --smoke --method-seeds 0 --run-id pilot-rq2rq4
 # ④ RQ5 七项机制消融
 ./.venv/bin/python experiment/run_stc_ablation.py --smoke --method-seeds 0 --timeout-s 3600 --run-id pilot-rq5-ablation
 # ⑤ RQ5 规模/参数族
