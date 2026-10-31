@@ -84,31 +84,32 @@ Task 10 覆盖 Gate、绘图、冻结与报告证据。其代码已有多轮加�
 
 ## 6. 运行环境与常用命令
 
-建议解释器：
+参考解释器（2026-10-31 起为 macOS 参考机，见第 9 节；初始化
+`python3 -m venv .venv && ./.venv/bin/pip install -r requirements.lock.txt`）：
 
-```powershell
-F:\anaconda3\envs\pytorch\python.exe
+```bash
+./.venv/bin/python
 ```
 
 从仓库根目录执行：
 
-```powershell
-F:\anaconda3\envs\pytorch\python.exe -m pytest tests/ -q
+```bash
+./.venv/bin/python -m pytest tests/ -q
 ```
 
 仅做配置检查：
 
-```powershell
-F:\anaconda3\envs\pytorch\python.exe experiment/run_stc_main.py --dry-run
-F:\anaconda3\envs\pytorch\python.exe experiment/run_stc_ablation.py --dry-run
-F:\anaconda3\envs\pytorch\python.exe experiment/run_stc_scale.py --dry-run
+```bash
+./.venv/bin/python experiment/run_stc_main.py --dry-run
+./.venv/bin/python experiment/run_stc_ablation.py --dry-run
+./.venv/bin/python experiment/run_stc_scale.py --dry-run
 ```
 
 在 Task 10 审查通过并获得授权前，不要运行正式矩阵命令。Gate 和绘图命令在有效冻结 run 产生后使用：
 
-```powershell
-F:\anaconda3\envs\pytorch\python.exe experiment/run_stc_gates.py --runs-dir results/runs
-F:\anaconda3\envs\pytorch\python.exe plots/plot_stc_results.py --runs results/runs/<run-id> --out-dir results/figs
+```bash
+./.venv/bin/python experiment/run_stc_gates.py --runs-dir results/runs
+./.venv/bin/python plots/plot_stc_results.py --runs results/runs/<run-id> --out-dir results/figs
 ```
 
 ## 7. 结果、模型与 Git
@@ -125,3 +126,30 @@ F:\anaconda3\envs\pytorch\python.exe plots/plot_stc_results.py --runs results/ru
 3. 运行全仓测试并进行独立复审。
 4. 准备一个单场景、有限任务、限时的 bounded pilot 方案，提交给项目负责人批准。
 5. 只有在 pilot Gate 通过后，执行 5 个 map/task 场景 × 5 个 method seed 的正式矩阵，并生成冻结 manifest、报告 bundle 和论文图表。
+
+## 9. 参考执行环境变更记录（2026-10-31：Windows → macOS）
+
+项目已由 Windows 参考机（`F:\Projects\Py\MultiUAV-v2`，conda `pytorch`：Python 3.10.18 /
+numpy 2.2.6 / scipy 1.15.3 / torch 2.8.0 / pytest 9.1.1）迁移至 **macOS 15.7 arm64
+（Apple Silicon）参考机**。经项目负责人批准（2026-10-31），在本机**重定数值基线**：
+
+- **新参考环境**：仓库根 `.venv`——Python 3.13.16 / numpy 2.5.4 / scipy 1.18.1 /
+  torch 2.15.0 / matplotlib 3.11.2 / pytest 9.2.0；完整锁定见 `requirements.lock.txt`。
+- **重定依据**：天线方向图零陷 (90°,0°) 的 dB 值是大规模浮点抵消的舍入残差，等价于
+  执行环境指纹。本机上 numpy 2.2.6 与 2.5.4 **逐位一致**给出 −292.30602416217334，
+  而旧 Windows 锚值为 −291.75958991746415——差异由平台（x86_64→arm64 数学库）造成，
+  任何依赖版本组合都无法在本机复现旧值；常规角度增益跨 numpy 版本逐位稳定，物理模型
+  本身未变。
+- **决策时点**：正式论文结果尚未产生（开发/冒烟产物本就不作为论文证据，亦未随迁移
+  保留），重定基线无科学代价；此后所有正式 run 的 manifest 记录新版本栈。
+- **相应提交**：`tests/test_radio_map.py` 锚点重钉（零陷锚=环境指纹，另增 3 个跨平台
+  稳定的常规角度锚守护天线模型）；`segment/stc/sac_candidates.py` 对不可 stat 的
+  checkpoint 路径降级为诚实 `unavailable`（macOS 对超长路径抛 ENAMETOOLONG）；
+  README / CLAUDE.md / 本文档命令改用 `./.venv/bin/python`。
+- **迁移损失**（git-ignored，未随克隆转移）：`results/runs/`（全部开发/冒烟 run）、
+  `results/models/`（全部训练权重；`results/frozen_v1_2026-10-21/` 内尚存 N=2 旧
+  100m 单位制 TD3/DDPG/SAC checkpoint，SI 兼容性按契约由加载器判定，不兼容则
+  GATSAC/DRL 基线如实记 `unavailable`）、`results/logs/`、`results/figs/`、
+  `.superpowers/sdd/`（任务过程报告）。
+- **历史数值**：Windows 时代的一切数值自此仅作历史对照，不再逐位可复现；
+  `frozen_v0/v1/v2` 维持只读。
