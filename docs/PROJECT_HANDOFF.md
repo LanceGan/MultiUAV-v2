@@ -60,27 +60,31 @@ J = w_T·T/T_ref + w_D·D/D_ref
   - `results/figs/alns_routes_uav2_corrected_radio.png`
   这些是旧路线在修复电磁地图上的重绘，不是正式 STC 论文结果。
 
-## 5. 当前状态：Task 10 未验收
+## 5. 当前状态：Task 10 第四轮复审已完成并修复（2026-10-31 晚）
 
-Task 10 覆盖 Gate、绘图、冻结与报告证据。其代码已有多轮加固，最新提交为：
+Task 10 覆盖 Gate、绘图、冻结与报告证据。历史加固提交：
 
 - `b4a9530`：Gate 4 认证与 Gate 1 跨场景拼接修复。
 - `f628825`：Gate 认证第二轮修复。
 
-**截至本交接文档，`f628825` 尚未完成独立复审。** 因此以下动作仍被禁止：
+**第四轮独立复审（`d2e20bd..f628825`，2026-10-31）已完成**：Task 9 两个修复提交
+（`9ed2d93`/`6fa4e3e`）通过；Gate/绘图侧发现 **4 个 Important、0 个 Critical**
+（三个由合成伪证据探针实际打出假 PASS），已全部修复于 `41b94d9` 并以
+`tests/stc/test_task10_recovery4.py` 钉死（全量回归 449 passed）：
 
-- 不启动 bounded pilot。
+1. Gate 1 可跨 run 拼接同场景证据 → 分组键加入 run_id + world/scenario 身份校验；
+2. Gate 3 消融配对无视 method_seed、依赖记录顺序 → 改 (scenario, method_seed)
+   配对 + 单一 comparator 规则；
+3. 报告 bundle 不校验图件↔provenance 条目对应 → 要求精确相等；
+4. 绘图 `check_compatible` 只覆盖 stc_main → 推广到 ablation/scale/segment。
+
+注意：第四轮修复由复审者本人实施，**Task 10 的最终验收由项目负责人决定**。在验收
+确认前仍维持：
+
 - 不将现有 `results/runs/` 开发/冒烟产物作为论文实验结论。
 - 不启动正式多 seed 矩阵。
 
-下一位开发者应先独立审查 `d2e20bd..f628825`，至少验证：
-
-1. Gate 1 对每个场景独立验证完整的 `K(K+1)` 合法边集，任何场景的非法、缺失或伪生成器证据都不能被其他场景掩盖。
-2. Gate 4 绑定真实 `resolved_config.json`、输入哈希、实验特定产物契约和真实文件字节；报告 bundle 必须绑定图件、provenance、run ID 和输入身份。
-3. Gate 2/3 的方法清单、同场景同 method-seed 配对、异常/失败策略、层次统计和共同可行集定义一致。
-4. 绘图不混用不同代码、评价器、物理世界、地图或候选库版本的 run。
-
-只有 Task 10 独立复审通过后，才能向项目负责人申请启动 bounded pilot。pilot 通过且获明确批准后，才可以启动正式多 seed 矩阵。
+验收后的下一步：按第 8 节准备 bounded pilot 方案并报批。
 
 ## 6. 运行环境与常用命令
 
