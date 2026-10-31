@@ -49,7 +49,6 @@ DEFAULT_CONFIG = {
     "iterations": 1000,
     "generator_config": {"straight_hold": True},
 }
-EXPECTED_ARTIFACTS = ("resolved_config.json", "records.json", "summary.json")
 
 
 def _synthetic_scenario(n_uav, n_tasks, length_m, n_bs, task_seed, map_seed,

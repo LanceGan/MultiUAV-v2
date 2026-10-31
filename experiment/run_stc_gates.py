@@ -293,14 +293,15 @@ def evaluate_gate_0(tests_exit_code):
 
 
 def _gate_1_scenario(evaluated):
-    """Validate one scenario's evaluated generators.
+    """Validate one run-scenario group's evaluated generators.
 
     Returns ``(auth_problems, complete_problems, gens)``.  ``auth_problems`` are
     authenticity failures (forged generator names, self-loops / forged edges,
-    incomplete coverage, inconsistent common IDs) that invalidate the evidence
-    in ANY scenario.  ``complete_problems`` are per-scenario completeness
-    failures (missing baseline / comm-aware / empty common intersection); at
-    least one scenario must have none.
+    incomplete coverage, inconsistent common IDs, mixed world/scenario
+    identities) that invalidate the evidence in ANY group.  ``complete_problems``
+    are per-group completeness failures (missing baseline / comm-aware / empty
+    common intersection / missing world identity); at least one group must have
+    none.
     """
     auth = []
     complete = []
@@ -312,6 +313,15 @@ def _gate_1_scenario(evaluated):
     comm_aware = [g for g in evaluated if g != "straight_hold"]
     if not comm_aware:
         complete.append("no communication-aware generator evaluated")
+
+    # every record must carry its world/scenario identity, and all generators in
+    # one group must share it — a group mixing identities is spliced evidence
+    worlds = {rec.get("world_hash") for rec in evaluated.values()}
+    scen_hashes = {rec.get("scenario_hash") for rec in evaluated.values()}
+    if any(not w for w in worlds) or any(not s for s in scen_hashes):
+        complete.append("segment record(s) missing world/scenario identity")
+    if len({w for w in worlds if w}) > 1 or len({s for s in scen_hashes if s}) > 1:
+        auth.append("generators mix different world/scenario identities")
 
     common = None
     declared_sets = []
@@ -350,14 +360,17 @@ def _gate_1_scenario(evaluated):
 
 
 def evaluate_gate_1(segment_runs):
-    """Gate 1: segment-layer evidence, validated per scenario.
+    """Gate 1: segment-layer evidence, validated per run-scenario group.
 
     Any authenticity failure (forged generator, self-loop / forged edge,
-    incomplete coverage, inconsistent common IDs) in ANY scenario fails the
-    gate — it is never masked by a valid scenario elsewhere.  At least one
-    scenario must also be complete (straight-hold baseline + a communication-
-    aware generator + a non-empty common-feasible intersection), and evidence is
-    never spliced across scenarios.
+    incomplete coverage, inconsistent common IDs, mixed world/scenario
+    identities) in ANY group fails the gate — it is never masked by a valid
+    group elsewhere.  At least one group must also be complete (straight-hold
+    baseline + a communication-aware generator + a non-empty common-feasible
+    intersection + full world/scenario identity).  Groups are keyed by
+    (run, scenario), so evidence is never spliced across scenarios OR across
+    runs: a straight-hold from one sealed run plus a comm-aware generator from
+    another is not a valid segment comparison even on the same seeds.
     """
     if not segment_runs:
         return _gate(NOT_RUN, "no stc_segment_gate run found")
@@ -367,7 +380,7 @@ def evaluate_gate_1(segment_runs):
                      ["%s: %s" % (r.run_id, "; ".join(r.problems))
                       for r in segment_runs if r.problems])
 
-    by_scen = {}
+    by_group = {}
     for run in valid:
         for rec in (run.artifacts.get("records.json") or []):
             if not isinstance(rec, dict) or rec.get("status") != "evaluated":
@@ -375,16 +388,17 @@ def evaluate_gate_1(segment_runs):
             gen = rec.get("generator")
             if gen is None or not _finite(rec.get("feasible_frac")):
                 continue  # NaN / missing feasibility is not evidence
-            scen = (rec.get("uav_num"), rec.get("map_seed"), rec.get("task_seed"))
-            by_scen.setdefault(scen, {})[gen] = rec
+            group = (run.run_id, rec.get("uav_num"), rec.get("map_seed"),
+                     rec.get("task_seed"))
+            by_group.setdefault(group, {})[gen] = rec
 
-    if not by_scen:
+    if not by_group:
         return _gate(FAIL, "no evaluated segment generators with finite feasibility")
 
     auth_problems = []
     any_complete = False
     gens = []
-    for scen, evaluated in by_scen.items():
+    for group, evaluated in by_group.items():
         auth, complete, g = _gate_1_scenario(evaluated)
         auth_problems.extend(auth)
         gens.extend(g)
@@ -395,12 +409,14 @@ def evaluate_gate_1(segment_runs):
         return _gate(FAIL, "; ".join(dict.fromkeys(auth_problems)),
                      sorted(set(gens)))
     if not any_complete:
-        return _gate(FAIL, "no scenario has complete segment evidence "
+        return _gate(FAIL, "no run-scenario group has complete segment evidence "
                            "(straight-hold baseline + communication-aware "
-                           "generator + common-feasible intersection)",
+                           "generator + common-feasible intersection + "
+                           "world/scenario identity)",
                      sorted(set(gens)))
     return _gate(PASS,
-                 "%d scenario(s) with real segment evidence" % len(by_scen),
+                 "%d run-scenario group(s) with real segment evidence"
+                 % len(by_group),
                  sorted(set(gens)))
 
 
@@ -462,10 +478,6 @@ def _is_proposed(rec):
     return rec.get("method") in PROPOSED_METHODS
 
 
-def _scenario_key(rec):
-    return (rec.get("uav_num"), rec.get("map_seed"), rec.get("task_seed"))
-
-
 def _method_key(rec):
     """A (scenario, method_seed) pairing key: a contrast must share the seed."""
     return (rec.get("uav_num"), rec.get("map_seed"), rec.get("task_seed"),
@@ -476,10 +488,12 @@ def evaluate_gate_3(main_runs, ablation_runs):
     """Gate 3: proposed-method contrast (vs >=2 real baselines with finite
     objective) + at least two mechanisms that genuinely degrade when removed.
 
-    Both checks are evaluated WITHIN a single scenario: evidence is never
-    spliced across scenarios (proposed from one scenario + baselines from
-    another is not a contrast).  Only the declared ablation mechanism names
-    count as contributions; an arbitrary name never does.
+    Both checks are evaluated WITHIN a single (scenario, method_seed) pairing
+    key: evidence is never spliced across scenarios or across search seeds
+    (proposed from one scenario + baselines from another, or a mechanism
+    objective compared against another seed's 'full' comparator, is not a
+    contrast).  Only the declared ablation mechanism names count as
+    contributions; an arbitrary name never does.
     """
     from experiment.run_stc_ablation import ABLATIONS as KNOWN_ABLATIONS
 
@@ -512,7 +526,7 @@ def evaluate_gate_3(main_runs, ablation_runs):
     for run in ablation_runs:
         if not _ok(run):
             continue
-        by_scen = {}
+        by_pair = {}
         for rec in (run.artifacts.get("records.json") or []):
             if not isinstance(rec, dict) or rec.get("status") != "evaluated":
                 continue
@@ -521,15 +535,20 @@ def evaluate_gate_3(main_runs, ablation_runs):
             name = rec.get("ablation")
             if name != "full" and name not in KNOWN_ABLATIONS:
                 continue  # arbitrary names never count as contributions
-            d = by_scen.setdefault(_scenario_key(rec), {"full": None, "mech": {}})
+            # pair by (scenario, method_seed): a mechanism objective may only be
+            # compared against the 'full' comparator of the SAME search seed —
+            # never against another seed's comparator (order-independent)
+            d = by_pair.setdefault(_method_key(rec), {"full": [], "mech": {}})
             if name == "full":
-                d["full"] = rec["objective"]
+                d["full"].append(float(rec["objective"]))
             else:
-                d["mech"][name] = rec["objective"]
-        for d in by_scen.values():
-            if d["full"] is None:
-                continue
-            contrib = [n for n, o in d["mech"].items() if o > d["full"]]
+                d["mech"].setdefault(name, []).append(float(rec["objective"]))
+        for d in by_pair.values():
+            if len(d["full"]) != 1:
+                continue  # absent or duplicated comparator is not paired evidence
+            full = d["full"][0]
+            contrib = [n for n, vals in d["mech"].items()
+                       if len(vals) == 1 and vals[0] > full]
             if len(contrib) >= 2:
                 ablation_valid = True
                 n_contributing = max(n_contributing, len(contrib))
@@ -543,7 +562,8 @@ def evaluate_gate_3(main_runs, ablation_runs):
         _requirement(ablation_present, ablation_valid,
                      "%d contributing mechanisms" % n_contributing,
                      "ablation invalid (need a 'full' comparator + >=2 declared "
-                     "mechanisms that degrade when removed, within one scenario)",
+                     "mechanisms that degrade when removed, within one scenario "
+                     "and method seed)",
                      "no stc_ablation run"),
     ])
 
@@ -554,9 +574,11 @@ def _valid_reporting_bundle(path, runs):
 
     Verified: every figure's recorded SHA-256/byte length against the actual
     figure file; the bundle's ``provenance_sha256`` against the actual
-    ``figures_provenance.json``; and the provenance's run ids + input hashes
-    against the gated runs (so a bundle self-reporting arbitrary file hashes or
-    omitting the provenance/run/input association is rejected).
+    ``figures_provenance.json``; exact figure <-> provenance-entry
+    correspondence; and the provenance's run ids + input hashes against the
+    gated runs (so a bundle self-reporting arbitrary file hashes, smuggling an
+    unprovenanced figure, or omitting the provenance/run/input association is
+    rejected).
     """
     path = Path(path)
     if not path.is_file():
@@ -594,6 +616,10 @@ def _valid_reporting_bundle(path, runs):
     except (OSError, ValueError):
         return False
     if not isinstance(provenance, dict) or not provenance:
+        return False
+    # every bundle figure must have its provenance entry and vice versa — a
+    # byte-valid figure without a run/input association is not reportable
+    if set(figures) != set(provenance):
         return False
     run_inputs = {r.run_id: r.manifest.get("inputs", {}) for r in runs}
     for prov in provenance.values():

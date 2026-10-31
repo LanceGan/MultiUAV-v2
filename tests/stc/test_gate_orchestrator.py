@@ -48,7 +48,8 @@ _EDGES = [[-1, 0], [-1, 1], [0, 1], [1, 0], [0, 2], [1, 2]]  # K=2 legal set
 
 
 def _segment_record(generator, status="evaluated", feasible_frac=0.9,
-                    per_edge=None, common_feasible_edges=None):
+                    per_edge=None, common_feasible_edges=None,
+                    world_hash="w" * 64, scenario_hash="s" * 64):
     edges = per_edge if per_edge is not None else _EDGES
     common = (common_feasible_edges if common_feasible_edges is not None
               else edges)
@@ -56,6 +57,7 @@ def _segment_record(generator, status="evaluated", feasible_frac=0.9,
             "feasible_frac": feasible_frac, "n_edges": len(edges),
             "common_feasible_n": len(common), "t_mean_s": 1.0,
             "d_mean_s": 1.0, "o_mean": 0.0,
+            "world_hash": world_hash, "scenario_hash": scenario_hash,
             "per_edge": [{"edge": e, "feasible": True} for e in edges],
             "common_feasible_edges": common}
 

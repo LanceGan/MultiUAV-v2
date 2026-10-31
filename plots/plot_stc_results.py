@@ -450,12 +450,15 @@ def render_figures(runs_by_experiment, out_dir):
             figs += _render_rq2(valid, out_dir)
         elif experiment == "stc_ablation":
             records = _concat(runs, "records.json")
+            check_compatible(records)
             figs = _render_ablation(records, out_dir)
         elif experiment == "stc_scale":
             records = _concat(runs, "records.json")
+            check_compatible(records)
             figs = _render_scale(records, out_dir)
         elif experiment == "stc_segment_gate":
             records = _concat(runs, "records.json")
+            check_compatible(records)
             figs = _render_segment(records, out_dir)
         elif experiment == "stc_evaluator_audit":
             figs = _render_rq3(valid, out_dir)
