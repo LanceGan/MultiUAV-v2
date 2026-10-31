@@ -7,7 +7,7 @@ is clean (not mixed with the older Ours/Proposed/AllProposed histories).
 
 CLI::
 
-    F:/anaconda3/envs/pytorch/python.exe plots/plot_marl_compare.py
+    ./.venv/bin/python plots/plot_marl_compare.py
 """
 
 import os

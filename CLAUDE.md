@@ -284,11 +284,12 @@ docs/          specs(设计) + plans(计划)
 ## 常用命令
 
 ```bash
-# 环境：conda pytorch（F:/anaconda3/envs/pytorch/python.exe）
-F:/anaconda3/envs/pytorch/python.exe -m pytest tests/ -q                          # 测试
-F:/anaconda3/envs/pytorch/python.exe experiment/run_traj.py --uav_nums 2 --total_episode 2000  # 训练
-F:/anaconda3/envs/pytorch/python.exe experiment/run_assign.py --uav_nums "2,3,4"  # 分配对比
-F:/anaconda3/envs/pytorch/python.exe experiment/run_seq.py --uav_nums "2,3,4"     # 序列对比
-F:/anaconda3/envs/pytorch/python.exe plots/plot_results.py                        # 出图
-F:/anaconda3/envs/pytorch/python.exe experiment/run_all.py --uav_nums 2 3 4       # 一键复现
+# 环境（2026-10-31 起）：macOS arm64 参考机，项目根 .venv（锁定版本见 requirements.lock.txt）
+# 初始化：python3 -m venv .venv && ./.venv/bin/pip install -r requirements.lock.txt
+./.venv/bin/python -m pytest tests/ -q                          # 测试
+./.venv/bin/python experiment/run_stc_main.py --dry-run         # STC 主实验（干跑）
+./.venv/bin/python experiment/run_stc_gates.py --runs-dir results/runs  # Gate 报告
+./.venv/bin/python experiment/run_traj.py --uav_nums 2 --total_episode 2000  # 旧三层：训练
+./.venv/bin/python experiment/run_all.py --uav_nums 2 3 4       # 旧三层：一键复现
 ```
+

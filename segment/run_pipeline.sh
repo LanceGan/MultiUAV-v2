@@ -7,7 +7,7 @@
 # for N=2.
 set -u
 cd "$(dirname "$0")/.." || exit 1
-PY="F:/anaconda3/envs/pytorch/python.exe"
+PY="./.venv/bin/python"
 export OMP_NUM_THREADS=5
 mkdir -p results/logs
 

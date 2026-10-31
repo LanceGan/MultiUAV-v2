@@ -19,23 +19,18 @@
 
 ## 运行环境
 
-- Python 解释器：`F:/anaconda3/envs/pytorch/python.exe`（conda `pytorch` 环境，
-  含 numpy / scipy / torch / matplotlib / pytest）。
-- 依赖见 `requirements.txt`：
-
-  ```
-  numpy
-  scipy
-  torch
-  matplotlib
-  pytest
-  ```
-
-- 从项目根目录运行（`radio_map` 等包需通过根目录 `sys.path` 解析）：
+- **参考执行环境（2026-10-31 起）**：macOS arm64（Apple Silicon）+ 项目根目录下的
+  `.venv`（Python 3.13，锁定版本见 `requirements.lock.txt`）。初始化：
 
   ```bash
-  cd f:/Projects/Py/MultiUAV_New
+  python3 -m venv .venv
+  ./.venv/bin/pip install -r requirements.lock.txt
   ```
+
+- 顶层依赖声明见 `requirements.txt`；**正式实验/测试一律用 `./.venv/bin/python`**，
+  保证与 run manifest 记录的版本栈一致。旧文档中的
+  `F:/anaconda3/envs/pytorch/python.exe` 是已退役的 Windows 参考机路径。
+- 从项目根目录运行（`radio_map` 等包需通过根目录 `sys.path` 解析）。
 
 ## 目录结构
 
@@ -71,8 +66,7 @@ tests/            pytest 测试
 ## 一条命令复现全部结果
 
 ```bash
-cd f:/Projects/Py/MultiUAV_New
-F:/anaconda3/envs/pytorch/python.exe experiment/run_all.py --uav_nums 2 3 4
+./.venv/bin/python experiment/run_all.py --uav_nums 2 3 4
 ```
 
 这会按顺序执行五步，产出所有指标 JSON 与图（种子固定为 42，结果可复现）：
@@ -86,7 +80,7 @@ F:/anaconda3/envs/pytorch/python.exe experiment/run_all.py --uav_nums 2 3 4
 只跑 N=2 冒烟（更快）：
 
 ```bash
-F:/anaconda3/envs/pytorch/python.exe experiment/run_all.py --uav_nums 2 --total_episode 200
+./.venv/bin/python experiment/run_all.py --uav_nums 2 --total_episode 200
 ```
 
 其他 `run_all.py` 参数：
@@ -107,37 +101,36 @@ F:/anaconda3/envs/pytorch/python.exe experiment/run_all.py --uav_nums 2 --total_
 
 ```bash
 # 层 1：任务分配（四种聚类方法）
-F:/anaconda3/envs/pytorch/python.exe experiment/run_assign.py --uav_nums 2,3,4
+./.venv/bin/python experiment/run_assign.py --uav_nums 2,3,4
 
 # 层 2：序列决策（五种方法，固定 4D 聚类）
-F:/anaconda3/envs/pytorch/python.exe experiment/run_seq.py --uav_nums 2,3,4
+./.venv/bin/python experiment/run_seq.py --uav_nums 2,3,4
 
 # 层 3：航迹（Baseline 贪心 vs Proposed TD3）
-F:/anaconda3/envs/pytorch/python.exe experiment/run_traj.py --uav_nums 2,3,4 --total_episode 300
+./.venv/bin/python experiment/run_traj.py --uav_nums 2,3,4 --total_episode 300
 
 # 端到端：全基线 vs 全提议
-F:/anaconda3/envs/pytorch/python.exe experiment/run_end2end.py --uav_nums 2,3,4 --total_episode 300
+./.venv/bin/python experiment/run_end2end.py --uav_nums 2,3,4 --total_episode 300
 ```
 
 单独训练 / 回放（Task 7/8 的独立入口）：
 
 ```bash
-F:/anaconda3/envs/pytorch/python.exe trajectory/train.py --uav_num 2 --total_episode 300 --model_subdir Ours
-F:/anaconda3/envs/pytorch/python.exe trajectory/test.py --uav_num 2 --model_subdir Ours
-F:/anaconda3/envs/pytorch/python.exe experiment/evaluate.py --run_id UAV_2_Ours_best
+./.venv/bin/python trajectory/train.py --uav_num 2 --total_episode 300 --model_subdir Ours
+./.venv/bin/python trajectory/test.py --uav_num 2 --model_subdir Ours
+./.venv/bin/python experiment/evaluate.py --run_id UAV_2_Ours_best
 ```
 
 单独绘图：
 
 ```bash
-F:/anaconda3/envs/pytorch/python.exe plots/plot_results.py
+./.venv/bin/python plots/plot_results.py
 ```
 
 ## 测试
 
 ```bash
-cd f:/Projects/Py/MultiUAV_New
-F:/anaconda3/envs/pytorch/python.exe -m pytest tests/ -v
+./.venv/bin/python -m pytest tests/ -v
 ```
 
 覆盖：`test_radio_map` / `test_metrics` / `test_clustering` / `test_radio_path` /

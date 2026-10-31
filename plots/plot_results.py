@@ -27,7 +27,7 @@ Figures produced:
 
 CLI::
 
-    F:/anaconda3/envs/pytorch/python.exe plots/plot_results.py
+    ./.venv/bin/python plots/plot_results.py
 """
 
 import argparse
