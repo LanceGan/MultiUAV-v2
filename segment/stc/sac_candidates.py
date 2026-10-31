@@ -130,7 +130,13 @@ def _load_sac_policy(checkpoint_path, scenario):
     encode the training units, so a legacy 100-m/Mbit checkpoint is rejected).
     """
     path = Path(checkpoint_path)
-    if not path.is_file():
+    try:
+        is_file = path.is_file()
+    except (OSError, ValueError) as exc:
+        # stat() 本身失败（如 macOS/Linux 对超长路径抛 ENAMETOOLONG、内嵌 NUL 抛
+        # ValueError；Windows 对这类非法路径返回 False）——按契约降级为 unavailable
+        return None, "", "SAC checkpoint path is not readable: %r" % exc
+    if not is_file:
         return None, "", "SAC checkpoint file is missing: %s" % checkpoint_path
 
     import torch
