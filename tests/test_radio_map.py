@@ -57,10 +57,23 @@ def test_antenna_gain_is_python_scalar_without_warning():
 
 
 def test_antenna_gain_fixed_position_output():
-    # 固定位置输出回归：两个模块共享同一套天线阵列模型，在固定 (仰角, 方位角)
-    # 处的 dB 增益必须精确等于当前值。任何对天线模型的改动（哪怕仍返回有限值）
-    # 都会让这里失败，防止无线电值被无声改动。
-    expected = -291.75958991746415
+    # 固定位置输出回归：两个模块共享同一套天线阵列模型，锚点分两类——
+    # 1) 常规角度锚（跨平台/跨 numpy 版本逐位稳定）：守护天线模型本身不被无声改动；
+    # 2) 零陷锚 (90°,0°)（线性增益 ~1e-30，大规模浮点抵消，dB 值由舍入残差主导，
+    #    对数学库/硬件敏感）：作为参考执行环境的「指纹」。
+    # 2026-10-31 参考机由 Windows x86_64 迁至 macOS arm64 并重定基线：零陷锚由旧
+    # Windows 参考值 -291.75958991746415 改钉现值（本机 numpy 2.2.6 与 2.5.4 均
+    # 逐位给出 -292.30602416217334，证实差异源于平台而非依赖版本）。换机器时零陷
+    # 锚预期失败——那正是它的职责：显式决定是否重定基线，而不是让数值无声漂移。
+    regular_anchors = {
+        (45.0, 0.0): -12.10717164391609,
+        (100.0, 30.0): 0.5810204391488807,
+        (120.0, -60.0): 4.249834781162036,
+    }
+    null_anchor = -292.30602416217334
     for mod in (radio_map_A2G, radio_map_G2A):
+        for (theta, phi), expected in regular_anchors.items():
+            gain, _ = mod.getAntennaGain(theta, phi)
+            assert gain == pytest.approx(expected, abs=1e-9)
         gain, _ = mod.getAntennaGain(90.0, 0.0)
-        assert gain == pytest.approx(expected, abs=1e-6)
+        assert gain == pytest.approx(null_anchor, abs=1e-6)
