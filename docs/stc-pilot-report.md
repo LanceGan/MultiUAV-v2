@@ -94,6 +94,34 @@ pilot 抓出 3 个真实缺陷（D1/D2 待修，D3 已修）+ 1 个预算证伪�
 2. 探针可行 → 正式 RQ2+RQ4 首片（U=2 × 3 场景对 × 5 method seed）继续执行；
 3. D1/D2 修复后再议正式 scale/消融矩阵与完整 5 场景对（需扩充 seeds.json）。
 
-## 附录 A：保真度探针与正式首片结果（执行后补）
+## 附录 A：正式保真度探针结果（formal-probe-u2k20，2026-11-01）
 
-（待填）
+单元：U=2、K=20、200m 正式场、全生成器、单场景 (map 42, task 42)、单 method seed 0、
+ALNS 1000 迭代。run 密封 success（6 产物）。**单 seed 单场景，方向性信号，非论文结论。**
+
+| 方法 | 状态 | 可行 | obj J | T (s) | D (s) | 求解时长 |
+|---|---|---|---|---|---|---|
+| Region-Distance-Straight | unavailable* | — | — | — | — | — |
+| Shortest-Balanced-Graph | unavailable* | — | — | — | — | — |
+| Jia-EBTAS-style | evaluated | ✅ | 1.0876 | 481.0 | 269.0 | 161 s |
+| GATSAC-style | unavailable（无 SI checkpoint，诚实声明） | — | — | — | — | — |
+| Library-Open-Loop | evaluated | ✅ | 0.8871 | 330.5 | 263.5 | 1 s |
+| **Proposed STC-ALNS** | evaluated | ✅ | **0.7256** | **265.5** | **219.0** | 8182 s |
+
+\* 探针用修复前代码（git head `604c7ba`）构建库，两基线的 unavailable 是缺陷 **D4**
+（跨族 Pareto 剪枝剪绝基线轨迹族）的表现；D4 已修复于 `21ffdaa`（族保底 + 3 测试），
+正式首片用修复后代码，基线表将完整。探针 run 密封保留作 D4 发现证据；其 git head
+与正式批不同，绘图层的同源检查会自动拒绝混用。
+
+**探针回答的两个问题**：
+1. **可行性在正式口径恢复** ✅——三个被评方法全部可行（中断率 0.20–0.23 < 0.35），
+   冒烟全员超标确认为纯尺度效应（S1）。
+2. **单元成本实测**：库构建 ~115 min；Jia 161 s；Open-Loop 1 s；**Proposed 8182 s
+   （约 2.27 h）/seed**。正式首片（3 场景 × 5 seed）估算 ≈ 3×(1.9h 库 + 5×2.35h)
+   ≈ **41 h 连续计算**。
+
+**方向性信号（待正式矩阵检验）**：
+- Proposed vs Library-Open-Loop：0.7256 vs 0.8871（**−18.2%**）——冲突反馈闭环的
+  净效应（论文贡献 ③ 的核心对比），且 T（−19.7%）与 D（−16.9%）**同时**改善；
+- Proposed vs Jia-style：−33.3%；Open-Loop vs Jia：−18.4%（库本身的价值，贡献 ②）；
+- Proposed 把冲突损失压到 **0 bits**（Jia 方案冲突损失 4.2 Mbit 的同款场景）。
