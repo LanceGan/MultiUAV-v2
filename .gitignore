@@ -15,3 +15,5 @@ results/figs/
 
 # failed/timeout run quarantine (preserved evidence, outside Gate 4 scan scope)
 results/runs_failed/
+results/runs_pilot/
+results/figs_pilot/
