@@ -224,11 +224,36 @@ def _generate_edge_candidates(scenario, field, source, target, generator_config)
     return rankable, non_rankable
 
 
+def _family_floor(pruned, rankable, delta_t_s):
+    """Guarantee per-generator-family representation after cross-family pruning.
+
+    System-baseline identity (``validate_baseline_availability``) requires each
+    generator family that produced a rankable candidate to keep at least one
+    entry per edge — no substitute family is allowed.  Cross-family domination
+    can otherwise erase a family entirely: on a zero-payload depot edge a relay
+    path whose flight time quantizes to the same slot count but samples lower
+    outage strictly dominates ``straight_hold`` (formal-probe defect D4).  For
+    each erased family this re-adds its single cheapest candidate; the entry may
+    therefore exceed ``max_candidates`` by at most (families - 1), in the same
+    retention spirit as sector diversity.
+    """
+    present = {c.generator for c in pruned}
+    by_family = {}
+    for c in rankable:
+        if c.generator not in present:
+            by_family.setdefault(c.generator, []).append(c)
+    floors = [min(group, key=lambda c: candidate_cost(c, delta_t_s))
+              for _, group in sorted(by_family.items())]
+    return tuple(pruned) + tuple(floors)
+
+
 def build_all_pairs_library(scenario, field, *, generator_config=None,
                             pareto_kwargs=None, drl_candidates=None):
     """Build the frozen all-pairs directed segment library.
 
-    Produces exactly ``K(K+1)`` task edges.  ``drl_candidates`` is an optional
+    Produces exactly ``K(K+1)`` task edges.  Every generator family that
+    produced a rankable candidate retains at least one entry per edge (see
+    :func:`_family_floor`).  ``drl_candidates`` is an optional
     mapping ``{(source, target): [SegmentCandidate, ...]}`` of DRL baseline
     entries (labeled with :func:`drl_generator_label`); they are stored verbatim
     after pruning and never dropped.
@@ -245,6 +270,9 @@ def build_all_pairs_library(scenario, field, *, generator_config=None,
         rankable, non_rankable = _generate_edge_candidates(
             scenario, field, source, target, generator_config)
         pruned = pareto_prune(rankable, **pareto_kwargs)
+        pruned = _family_floor(pruned, rankable,
+                               pareto_kwargs.get("delta_t_s",
+                                                 scenario.limits.delta_t_s))
         extra = list(non_rankable) + list(drl_candidates.get((source, target), ()))
         candidates[(source, target)] = tuple(pruned) + tuple(extra)
 

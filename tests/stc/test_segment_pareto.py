@@ -144,3 +144,52 @@ def test_build_default_path_retains_sector_diverse_candidate():
     diverse = [c for c in rankable if int(np.argmax(_sector_signature(c))) != 0]
     assert diverse, "no sector-diverse candidate survived the default build path"
     assert all(c.flight_steps > fast.flight_steps for c in diverse)
+
+
+# --------------------------------------------------------------------------- #
+# Family floor: cross-family domination must not erase a baseline's family
+# --------------------------------------------------------------------------- #
+
+def _fam_cand(cid, generator, flight_steps, outage, sectors):
+    c = _cand(cid, flight_steps, 2.0, 0.0, outage, sectors)
+    return type(c)(**{**c.__dict__, "generator": generator})
+
+
+def test_family_floor_restores_pruned_family():
+    # Equal quantized flight slots + zero payload + strictly lower outage with
+    # the SAME sector signature: the relay candidate dominates straight_hold
+    # and pruning erases the family (the formal-probe D4 defect). The floor
+    # must restore the family's best candidate while keeping the dominator.
+    from segment.stc.library import _family_floor
+    straight = _fam_cand("sh", "straight_hold", 10, 0.2, [0] * 10)
+    relay = _fam_cand("cw", "comm_waypoint", 10, 0.1, [0] * 10)
+    pruned = pareto_prune([straight, relay], max_candidates=5,
+                          min_sector_distance=0.5)
+    assert all(c.generator != "straight_hold" for c in pruned), \
+        "precondition: domination erased the straight_hold family"
+    floored = _family_floor(pruned, [straight, relay], delta_t_s=0.5)
+    gens = {c.generator for c in floored}
+    assert "straight_hold" in gens and "comm_waypoint" in gens
+
+
+def test_family_floor_noop_when_all_families_survive():
+    from segment.stc.library import _family_floor
+    a = _fam_cand("a", "straight_hold", 10, 0.1, [0] * 10)
+    b = _fam_cand("b", "comm_waypoint", 20, 0.05, [1] * 20)
+    pruned = pareto_prune([a, b], max_candidates=5, min_sector_distance=0.0)
+    assert _family_floor(pruned, [a, b], delta_t_s=0.5) == tuple(pruned)
+
+
+def test_build_all_pairs_library_keeps_straight_hold_on_every_edge():
+    # the system-baseline identity contract: every edge of the shared library
+    # must retain at least one rankable candidate of each generating family
+    sc = _scenario(2)
+    lib = build_all_pairs_library(
+        sc, _TwoZoneField(),
+        generator_config={"straight_hold": True,
+                          "comm_waypoints": {"grid_shape": (4, 4),
+                                             "max_waypoints": 1}})
+    for edge, cands in lib.candidates.items():
+        gens = {c.generator for c in cands if c.rankable}
+        assert "straight_hold" in gens, \
+            "edge %r lost its straight_hold family" % (edge,)
