@@ -268,3 +268,39 @@ def test_render_rejects_incompatible_ablation_records(tmp_path):
                              _ablation_run("a2", "2" * 64)]}
     with pytest.raises(ValueError):
         render_figures(runs, tmp_path)
+
+
+def test_check_compatible_accepts_multicandidate_ablation_arm():
+    # the multi_candidate arm's REDUCED library is the treatment, not the
+    # environment: arms sharing reference/reference-library/world hashes are
+    # compatible even though their own library_hash differs
+    from plots.plot_stc_results import check_compatible
+    base = {"status": "evaluated", "uav_num": 2, "map_seed": 42, "task_seed": 42,
+            "reference_hash": "r" * 64, "reference_library_hash": "L" * 64,
+            "world_hash": "w" * 64}
+    records = [dict(base, ablation="full", library_hash="L" * 64),
+               dict(base, ablation="multi_candidate", library_hash="m" * 64)]
+    assert check_compatible(records) is True
+
+
+def test_check_compatible_accepts_scale_variants_with_distinct_libraries():
+    # scale families rebuild the library (and reference) per variant: variants
+    # are distinct conditions, not incompatible runs of one condition
+    from plots.plot_stc_results import check_compatible
+    def rec(variant, h):
+        return {"status": "evaluated", "uav_num": 2, "map_seed": 42,
+                "task_seed": 42, "family": "payload", "variant": variant,
+                "reference_hash": h * 64, "library_hash": h * 64,
+                "world_hash": "w" * 64}
+    assert check_compatible([rec("x0.5", "1"), rec("x1.0", "2")]) is True
+
+
+def test_check_compatible_rejects_mixed_hashes_within_one_variant():
+    from plots.plot_stc_results import check_compatible
+    def rec(h):
+        return {"status": "evaluated", "uav_num": 2, "map_seed": 42,
+                "task_seed": 42, "family": "payload", "variant": "x1.0",
+                "reference_hash": h * 64, "library_hash": h * 64,
+                "world_hash": "w" * 64}
+    with pytest.raises(ValueError):
+        check_compatible([rec("1"), rec("2")])

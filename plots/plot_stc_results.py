@@ -56,30 +56,39 @@ def _scalar(value):
 
 
 def _compat_key(rec):
-    return (rec.get("reference_hash"), rec.get("library_hash"),
+    # ``reference_library_hash`` (when present) is the normalization library
+    # shared by every record of a family; an ablation arm's OWN ``library_hash``
+    # may legitimately differ (e.g. the multi_candidate arm's reduced library is
+    # the treatment, not the environment).
+    return (rec.get("reference_hash"),
+            rec.get("reference_library_hash") or rec.get("library_hash"),
             rec.get("world_hash"))
 
 
 def check_compatible(records):
-    """Raise if records from the SAME scenario mix incompatible runs.
+    """Raise if records from the SAME experimental condition mix incompatible
+    runs.
 
-    Records across different scenarios legitimately differ (different map/task
-    seeds); only records within one scenario must share reference/library/world
-    hashes.  Mixing scenarios is expected and handled by hierarchical
-    aggregation, not rejected.
+    A condition is (scenario, family, variant): records across different
+    scenarios — or across scale family/variant treatments, which legitimately
+    rebuild the library and reference — may differ; only records within one
+    condition must share reference/normalization-library/world hashes.  Mixing
+    conditions is expected and handled by hierarchical aggregation, not
+    rejected.
     """
-    by_scen = {}
+    by_cond = {}
     for r in records:
         if not isinstance(r, dict):
             continue
-        scen = (r.get("uav_num"), r.get("map_seed"), r.get("task_seed"))
-        by_scen.setdefault(scen, set()).add(_compat_key(r))
+        cond = (r.get("uav_num"), r.get("map_seed"), r.get("task_seed"),
+                r.get("family"), r.get("variant"))
+        by_cond.setdefault(cond, set()).add(_compat_key(r))
     problems = []
-    for scen, keys in by_scen.items():
+    for cond, keys in by_cond.items():
         keys.discard((None, None, None))
         if len(keys) > 1:
-            problems.append("scenario %r mixes incompatible runs: %r"
-                            % (scen, sorted(keys)))
+            problems.append("condition %r mixes incompatible runs: %r"
+                            % (cond, sorted(keys)))
     if problems:
         raise ValueError("; ".join(problems))
     return True
