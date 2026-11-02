@@ -28,16 +28,14 @@
 > 按 mac-win.md §3 执行，完成一项勾一项。
 
 - [x] 基于 `feat/mac`（commit `ec3e8c0`）创建 `feat/win` 分支（2026-11-02）
-- [ ] Python 3.13 建 venv：`python -m venv .venv`
-- [ ] 安装锁定栈：`.venv\Scripts\pip install -r requirements.lock.txt`
-      （numpy 2.5.4 / scipy 1.18.1 / torch 2.15.0 CPU / matplotlib 3.11.2 / pytest 9.2.0）
-- [ ] 全量测试：`.venv\Scripts\python -m pytest tests/ -q`，预期**恰好 1 个失败**：
-      `test_antenna_gain_fixed_position_output` 的零陷锚 (90°,0°)——它是"环境身份金丝雀"，
-      换机器必然失败
-- [ ] 零陷锚重钉：读取本机实际值 → 在 `feat/win` 上把零陷锚改钉为 Windows 值 →
-      中文 commit 记录重钉依据（常规角度锚应当跨平台一致，若也失败则停下排查）。
-      **不要**把这个改动合回 feat/mac；两分支各钉各的锚。
-- [ ] 本机零陷锚值记录于 §6 机器身份
+- [x] Python 3.13 建 venv：`uv python install 3.13`（3.13.14）→ `python -m venv .venv`
+- [x] 安装锁定栈：`.venv\Scripts\pip install -r requirements.lock.txt`
+      （numpy 2.5.4 / scipy 1.18.1 / torch 2.15.0 CPU / matplotlib 3.11.2 / pytest 9.2.0，
+      全部 cp313 win_amd64 轮子）
+- [x] 全量测试：首跑 **461 passed + 1 failed**（唯一失败 = 零陷锚金丝雀，符合预期）；
+      重钉后 `test_radio_map.py` 5 passed，全量复核后台进行中
+- [x] 零陷锚重钉：改钉为 Windows x86_64 值（中文 commit 记录依据；常规角度锚跨平台逐位稳定、未动）
+- [x] 本机零陷锚值记录于 §6 机器身份
 
 > 注：本机旧参考环境（conda `pytorch`，Python 3.10.18）是迁移前的历史栈，正式工作一律用上面的 `.venv`。
 
@@ -70,11 +68,14 @@ U=3 启动命令（场景 X∈{42,43,44} 逐个顺序跑，每场景独立 run-i
 
 ## 6. Windows 进度快照 + 机器身份
 
-- **环境身份金丝雀（零陷锚 (90°,0°) 本机值）**：待测（§3 环境初始化时读取）
+- **环境身份金丝雀（零陷锚 (90°,0°) 本机值）**：-291.75958991746415
+  （逐位复现旧 Windows 参考值；macOS arm64 为 -292.30602416217334）
+- **本机环境**：Windows 11 x86_64 (i5-12500H) · Python 3.13.14（uv 安装）· 锁定栈
+  （numpy 2.5.4 / scipy 1.18.1 / torch 2.15.0 CPU / matplotlib 3.11.2 / pytest 9.2.0）
 - run-id 命名约定：`formal-u3-sX-win`
-- 已完成：`feat/win` 分支创建、本文件初稿
-- 进行中：—
-- 待办：环境初始化（§3）、U=3 首场景探针、D1/D2 修复（scale 前置）
+- 已完成：`feat/win` 分支创建、win-mac.md 初稿、环境初始化（venv + 锁定栈 + 全量测试 + 零陷锚重钉）
+- 进行中：全量测试复核（后台）
+- 待办：U=3 首场景探针、D1/D2 修复（scale 前置）
 
 ## 7. 同步节奏
 
