@@ -125,3 +125,29 @@ ALNS 1000 迭代。run 密封 success（6 产物）。**单 seed 单场景，方
   净效应（论文贡献 ③ 的核心对比），且 T（−19.7%）与 D（−16.9%）**同时**改善；
 - Proposed vs Jia-style：−33.3%；Open-Loop vs Jia：−18.4%（库本身的价值，贡献 ②）；
 - Proposed 把冲突损失压到 **0 bits**（Jia 方案冲突损失 4.2 Mbit 的同款场景）。
+
+## 附录 C：SI 口径 DRL 单段重训（2026-11-02，负责人批准的重训线）
+
+训练入口 `experiment/train_stc_drl.py`（commit `9f01956`，仅新建文件）；统一设置：
+目标条件化单段环境（`StcSacEnv` + 文档定案奖励结构）、U=2/K=20 正式场景
+（map/task seed 42、200m 场）、3000 集、train_seed 42、held-out 84 条边（20% 切分，
+训练永不采样）、每 50 集 held-out 确定性评估选 best、4 线程（与首片同机并行）。
+单算法训练用时约 40–55 分钟。
+
+| 算法 | held-out 最佳可行率（@集数） | held-out 末次 | 训练末 100 集可行率 | best checkpoint SHA-256 前缀 |
+|---|---|---|---|---|
+| SAC | **95.2%**（@1300） | 90.5% | 98%（全程稳定） | `d6d4b33976065c15` |
+| TD3 | **96.4%**（@1450，三者最高） | 8.3% | 8%（尾段发散） | `53236fd32aefa7ba` |
+| DDPG | 91.7%（@1700） | 9.5% | 13%（尾段发散） | `64e3a875de53bfed` |
+
+**与项目历史的一致性**：TD3/DDPG 的中期峰值 + 后期 Q 过估计发散、SAC 全程稳定，
+与旧 100m 原型时代（实验 3/11 与 2026-10-21 对比）完全同构——"确定性 held-out
+评估选 best"机制再次按设计捕获峰值模型。三算法的奖励曲线与可行率曲线原始数据在
+`results/models/stc_drl/<algo>_u2_si-v1_rewards.npz`（`ep_rewards`/`ep_feasible`/
+`eval_heldout_feasible`），provenance JSON 含 git head 与全部参数。
+
+**用途与后续**：① SAC best 已通过 `_load_sac_policy` 正式校验 → GATSAC-style 基线
+可解锁（首片三场景保持统一无 checkpoint 口径，收官后跑 GATSAC 补充 run）；
+② 三算法作为 DRL 航段生成器进 RQ1 同边对比，按 spec §8.4 预注册门控判定升级与否
+（负责人指示：若效果更好可不视作基线）；③ TD3/DDPG 的加载器接线需改现有文件，
+待首片收官后实施。
