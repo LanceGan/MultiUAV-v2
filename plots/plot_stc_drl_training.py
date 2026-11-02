@@ -31,18 +31,23 @@ def _moving_avg(x, w=100):
     return (c[w:] - c[:-w]) / w
 
 
-def load_curves(models_dir, run_id):
+def load_curves(models_dir, run_id, max_episode=None):
+    """读取三算法曲线；``max_episode`` 只截断展示范围，npz 原始数据不动。"""
     out = {}
     for algo in ALGOS:
         p = Path(models_dir) / ("%s_u2_%s_rewards.npz" % (algo, run_id))
         if not p.is_file():
             continue
         d = np.load(p)
-        out[algo] = {
-            "ep_rewards": np.asarray(d["ep_rewards"], dtype=float),
-            "ep_feasible": np.asarray(d["ep_feasible"], dtype=float),
-            "heldout": np.asarray(d["eval_heldout_feasible"], dtype=float),
-        }
+        r = np.asarray(d["ep_rewards"], dtype=float)
+        f = np.asarray(d["ep_feasible"], dtype=float)
+        h = np.asarray(d["eval_heldout_feasible"], dtype=float)
+        if max_episode is not None:
+            r = r[:max_episode]
+            f = f[:max_episode]
+            if h.ndim == 2 and len(h):
+                h = h[h[:, 0] <= max_episode]
+        out[algo] = {"ep_rewards": r, "ep_feasible": f, "heldout": h}
     return out
 
 
@@ -98,8 +103,11 @@ def main(argv=None):
     ap.add_argument("--run-id", default="si-v1")
     ap.add_argument("--out-dir", default="results/figs")
     ap.add_argument("--window", type=int, default=100)
+    ap.add_argument("--max-episode", type=int, default=2000,
+                    help="展示截断集数（默认 2000；传 0 展示全程）；原始 npz 不受影响")
     a = ap.parse_args(argv)
-    curves = load_curves(a.models_dir, a.run_id)
+    max_ep = a.max_episode if a.max_episode and a.max_episode > 0 else None
+    curves = load_curves(a.models_dir, a.run_id, max_episode=max_ep)
     if not curves:
         ap.error("no *_rewards.npz found under %s for run id %r"
                  % (a.models_dir, a.run_id))
