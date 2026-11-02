@@ -33,7 +33,7 @@
       （numpy 2.5.4 / scipy 1.18.1 / torch 2.15.0 CPU / matplotlib 3.11.2 / pytest 9.2.0，
       全部 cp313 win_amd64 轮子）
 - [x] 全量测试：首跑 **461 passed + 1 failed**（唯一失败 = 零陷锚金丝雀，符合预期）；
-      重钉后 `test_radio_map.py` 5 passed，全量复核后台进行中
+      重钉后全量复核 **462 passed**（17 分钟），无其他测试受影响
 - [x] 零陷锚重钉：改钉为 Windows x86_64 值（中文 commit 记录依据；常规角度锚跨平台逐位稳定、未动）
 - [x] 本机零陷锚值记录于 §6 机器身份
 
@@ -74,7 +74,7 @@ U=3 启动命令（场景 X∈{42,43,44} 逐个顺序跑，每场景独立 run-i
   （numpy 2.5.4 / scipy 1.18.1 / torch 2.15.0 CPU / matplotlib 3.11.2 / pytest 9.2.0）
 - run-id 命名约定：`formal-u3-sX-win`
 - 已完成：`feat/win` 分支创建、win-mac.md 初稿、环境初始化（venv + 锁定栈 + 全量测试 + 零陷锚重钉）
-- 进行中：全量测试复核（后台）
+- 进行中：—
 - 待办：U=3 首场景探针、D1/D2 修复（scale 前置）
 
 ## 7. 同步节奏
