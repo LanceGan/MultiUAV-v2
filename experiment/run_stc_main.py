@@ -12,6 +12,7 @@ take precedence. The deterministic builder cannot train or invent SAC data.
 
 import argparse
 from collections import Counter
+from concurrent.futures import ProcessPoolExecutor
 from copy import deepcopy
 from dataclasses import asdict, is_dataclass
 import itertools
@@ -47,6 +48,7 @@ DEFAULT_CONFIG = {
     "uav_nums": [2], "map_seeds": [42], "task_seeds": [42],
     "method_seeds": [0, 1, 2, 3, 4], "methods": list(SYSTEM_BASELINE_KEYS),
     "iterations": 1000, "spacing_m": 200., "smoke": False, "smoke_tasks": 6,
+    "workers": 1,
     "generator_config": DEFAULT_GENERATOR_CONFIG,
     "graph_generators": sorted(GRAPH_GENS), "sac_checkpoint": None,
     "solver": {"rho": .1, "T0": .1, "cooling": .995, "segment": 100,
@@ -66,6 +68,7 @@ def _common_args(parser):
     parser.add_argument("--smoke", action="store_true", default=None)
     parser.add_argument("--iterations", type=int, default=None)
     parser.add_argument("--spacing-m", type=float, default=None)
+    parser.add_argument("--workers", type=int, default=None)
 
 
 def _reject_constant(token):
@@ -152,7 +155,7 @@ def _resolve_config(args):
         if "iterations" not in declared:
             cfg["iterations"] = cfg["solver"]["iterations"]
     cfg["solver"].pop("iterations", None)
-    for key in ("iterations", "spacing_m", "smoke", "methods", "uav_nums",
+    for key in ("iterations", "spacing_m", "smoke", "workers", "methods", "uav_nums",
                 "map_seeds", "task_seeds", "method_seeds"):
         value = getattr(args, key)
         if value is not None:
@@ -161,6 +164,7 @@ def _resolve_config(args):
                 if key != "methods":
                     value = [int(x) for x in value]
             cfg[key] = value
+    _config_integer(cfg["workers"], "workers", 1)
     if not isinstance(cfg["smoke"], bool):
         raise ValueError("smoke must be boolean")
     if cfg["smoke"]:
@@ -298,9 +302,120 @@ def _build_context(uav_num, map_seed, task_seed, cfg):
                       else {})
     library = build_all_pairs_library(sc, field,
                                       generator_config=cfg["generator_config"],
-                                      drl_candidates=drl_candidates)
+                                      drl_candidates=drl_candidates,
+                                      workers=cfg.get("workers", 1))
     reference = default_objective_spec(sc, library.candidates)
     return sc, field, library, reference, sac_result
+
+
+def _run_seed_grid(method_seed, ctx, checkpoint=None):
+    """Run all methods for one method_seed; return (records, solutions, timelines, failure).
+
+    ``checkpoint`` (when given) is invoked after every method, preserving the
+    pre-parallel per-method persistence granularity for the sequential path.
+    """
+    sc, field = ctx["sc"], ctx["field"]
+    library, reference = ctx["library"], ctx["reference"]
+    cfg = ctx["cfg"]
+    unavailable = ctx["unavailable"]
+    solver_config = ctx["solver_config"]
+    options = ctx["options"]
+    inputs = ctx["inputs"]
+    prefix = ctx["prefix"]
+    uav_num, map_seed, task_seed = ctx["uav_num"], ctx["map_seed"], ctx["task_seed"]
+
+    records, solutions, timelines = [], [], []
+    failure = None
+    for method in cfg["methods"]:
+        record_id = "%s_%d_%s" % (prefix, method_seed, method)
+        common = {"record_id": record_id, "uav_num": uav_num,
+                  "map_seed": map_seed, "task_seed": task_seed,
+                  "method_seed": method_seed, "method": method,
+                  "reference": reference, "reference_hash": reference.reference.source_hash,
+                  "library_hash": inputs["library"], "input_hashes": inputs,
+                  "world_hash": field.world_hash}
+        start = time.perf_counter()
+        if method in unavailable:
+            payload = _unavailable_payload(method, unavailable[method], cfg)
+            solution, trace = None, None
+        else:
+            try:
+                r = run_system_baseline(method, sc, library, field,
+                                        seed=method_seed,
+                                        method_seed=method_seed,
+                                        iterations=cfg["iterations"],
+                                        solver_config=solver_config,
+                                        **options)
+                payload = _result_payload(r, sc)
+                solution, trace = r.solution, r.result.timelines
+            except (Exception, KeyboardInterrupt) as exc:
+                payload = _failed_payload(method, exc, cfg)
+                failure = exc
+                solution, trace = None, None
+        payload["runtime_s"] = time.perf_counter() - start
+        records.append(dict(common, **payload))
+        solutions.append({"record_id": record_id, "solution": solution})
+        timelines.append({"record_id": record_id, "delta_t_s": sc.limits.delta_t_s,
+                          "bandwidth_hz": sc.limits.bandwidth_hz, "timelines": trace})
+        if checkpoint is not None:
+            checkpoint(records[-1], solutions[-1], timelines[-1])
+        if failure is not None:
+            break
+    return records, solutions, timelines, failure
+
+
+# Module-level worker globals for the parallel seed grid (spawn): the read-only
+# context is pickled once per worker by ``_grid_worker_init``.
+_GRID_CTX = None
+
+
+def _grid_worker_init(ctx):
+    global _GRID_CTX
+    _GRID_CTX = ctx
+
+
+def _grid_worker(method_seed):
+    return _run_seed_grid(method_seed, _GRID_CTX)
+
+
+def _run_method_grid(method_seeds, ctx, workers=1, checkpoint=None):
+    """Run every (method_seed, method) pair; merge in seed-major order.
+
+    Each seed is independent (``run_system_baseline`` seeds its own RNG from
+    ``method_seed``), so ``workers > 1`` reproduces the sequential records
+    bit-for-bit and only changes wall time.  The sequential path checkpoints
+    per-method (the pre-parallel contract); the parallel path checkpoints
+    per-seed, since worker processes cannot reach the caller's checkpoint.
+    """
+    if workers is None:
+        workers = os.cpu_count() or 1
+    records, solutions, timelines = [], [], []
+    first_failure = None
+    if workers > 1 and len(method_seeds) > 1:
+        with ProcessPoolExecutor(max_workers=workers,
+                                 initializer=_grid_worker_init,
+                                 initargs=(ctx,)) as ex:
+            seed_results = list(ex.map(_grid_worker, method_seeds))
+        for seed_records, seed_solutions, seed_timelines, seed_failure in seed_results:
+            records.extend(seed_records)
+            solutions.extend(seed_solutions)
+            timelines.extend(seed_timelines)
+            if checkpoint is not None:
+                for record, solution, timeline in zip(seed_records, seed_solutions,
+                                                      seed_timelines):
+                    checkpoint(record, solution, timeline)
+            if seed_failure is not None and first_failure is None:
+                first_failure = seed_failure
+    else:
+        for seed in method_seeds:
+            seed_records, seed_solutions, seed_timelines, seed_failure = (
+                _run_seed_grid(seed, ctx, checkpoint))
+            records.extend(seed_records)
+            solutions.extend(seed_solutions)
+            timelines.extend(seed_timelines)
+            if seed_failure is not None and first_failure is None:
+                first_failure = seed_failure
+    return records, solutions, timelines, first_failure
 
 
 def _run_scenario(sc, field, library, reference, sac_result,
@@ -330,51 +445,21 @@ def _run_scenario(sc, field, library, reference, sac_result,
             validate_baseline_availability(method, sc, library, **options)
         except BaselineUnavailable as exc:
             unavailable[method] = str(exc)
-    records, solutions, timelines = [], [], []
     solver_config = dict(cfg["solver"])
     solver_config.update({"score_" + key: val for key, val in cfg["score"].items()})
-    for method_seed in cfg["method_seeds"]:
-        for method in cfg["methods"]:
-            record_id = "%s_%d_%s" % (prefix, method_seed, method)
-            common = {"record_id": record_id, "uav_num": uav_num,
-                      "map_seed": map_seed, "task_seed": task_seed,
-                      "method_seed": method_seed, "method": method,
-                      "reference": reference, "reference_hash": reference.reference.source_hash,
-                      "library_hash": inputs["library"], "input_hashes": inputs,
-                      "world_hash": field.world_hash}
-            start = time.perf_counter()
-            failure = None
-            if method in unavailable:
-                payload = _unavailable_payload(method, unavailable[method], cfg)
-                solution, trace = None, None
-            else:
-                try:
-                    r = run_system_baseline(method, sc, library, field,
-                                            seed=method_seed,
-                                            method_seed=method_seed,
-                                            iterations=cfg["iterations"],
-                                            solver_config=solver_config,
-                                            **options)
-                    payload = _result_payload(r, sc)
-                    solution, trace = r.solution, r.result.timelines
-                except (Exception, KeyboardInterrupt) as exc:
-                    payload = _failed_payload(method, exc, cfg)
-                    failure = exc
-                    solution, trace = None, None
-            payload["runtime_s"] = time.perf_counter() - start
-            records.append(dict(common, **payload))
-            solutions.append({"record_id": record_id, "solution": solution})
-            timelines.append({"record_id": record_id, "delta_t_s": sc.limits.delta_t_s,
-                              "bandwidth_hz": sc.limits.bandwidth_hz, "timelines": trace})
-            if checkpoint is not None:
-                checkpoint(records[-1], solutions[-1], timelines[-1])
-            else:
-                for name, value in (("raw_records.json", records),
-                                    ("solutions.json", solutions),
-                                    ("timelines.json", timelines)):
-                    rc.write_bytes(name, _json_bytes(value))
-            if failure is not None:
-                raise failure
+    ctx = {"sc": sc, "field": field, "library": library, "reference": reference,
+           "cfg": cfg, "unavailable": unavailable, "solver_config": solver_config,
+           "options": options, "inputs": inputs, "prefix": prefix,
+           "uav_num": uav_num, "map_seed": map_seed, "task_seed": task_seed}
+    records, solutions, timelines, failure = _run_method_grid(
+        cfg["method_seeds"], ctx, workers=cfg.get("workers", 1), checkpoint=checkpoint)
+    if checkpoint is None:
+        for name, value in (("raw_records.json", records),
+                            ("solutions.json", solutions),
+                            ("timelines.json", timelines)):
+            rc.write_bytes(name, _json_bytes(value))
+    if failure is not None:
+        raise failure
     return records, solutions, timelines
 
 
