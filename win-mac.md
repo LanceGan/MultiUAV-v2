@@ -74,8 +74,8 @@ U=3 启动命令（场景 X∈{42,43,44} 逐个顺序跑，每场景独立 run-i
   （numpy 2.5.4 / scipy 1.18.1 / torch 2.15.0 CPU / matplotlib 3.11.2 / pytest 9.2.0）
 - run-id 命名约定：`formal-u3-sX-win`
 - 已完成：`feat/win` 分支创建、win-mac.md 初稿、环境初始化（venv + 锁定栈 + 全量测试 + 零陷锚重钉）
-- 进行中：—
-- 待办：U=3 首场景探针、D1/D2 修复（scale 前置）
+- 进行中：U=3 X=42 探针（run-id `formal-u3-s42-win`，后台运行中，起跑 2026-11-03 10:11）
+- 待办：U=3 场景 43/44 排程（视 X=42 实测成本）、D1/D2 修复（scale 前置）
 
 ## 7. 同步节奏
 
