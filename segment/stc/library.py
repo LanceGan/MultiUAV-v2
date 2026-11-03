@@ -17,6 +17,7 @@ any mismatch.
 import hashlib
 import json
 import os
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 
@@ -247,8 +248,46 @@ def _family_floor(pruned, rankable, delta_t_s):
     return tuple(pruned) + tuple(floors)
 
 
+# --------------------------------------------------------------------------- #
+# Per-edge build (shared by the sequential and parallel paths)
+# --------------------------------------------------------------------------- #
+
+def _build_edge(scenario, field, source, target, generator_config, pareto_kwargs):
+    """Build + prune the candidates for one directed edge (pure, RNG-free)."""
+    rankable, non_rankable = _generate_edge_candidates(
+        scenario, field, source, target, generator_config)
+    pruned = pareto_prune(rankable, **pareto_kwargs)
+    pruned = _family_floor(pruned, rankable,
+                           pareto_kwargs.get("delta_t_s", scenario.limits.delta_t_s))
+    return (source, target), tuple(pruned) + tuple(non_rankable)
+
+
+# Module-level worker globals, populated by ``_edge_worker_init`` in each
+# worker process (spawn).  The read-only scenario/field are pickled once per
+# worker rather than once per edge.
+_WORKER_SCENARIO = None
+_WORKER_FIELD = None
+_WORKER_GENERATOR_CONFIG = None
+_WORKER_PARETO_KWARGS = None
+
+
+def _edge_worker_init(scenario, field, generator_config, pareto_kwargs):
+    global _WORKER_SCENARIO, _WORKER_FIELD, _WORKER_GENERATOR_CONFIG, _WORKER_PARETO_KWARGS
+    _WORKER_SCENARIO = scenario
+    _WORKER_FIELD = field
+    _WORKER_GENERATOR_CONFIG = generator_config
+    _WORKER_PARETO_KWARGS = pareto_kwargs
+
+
+def _edge_worker_build(edge):
+    source, target = edge
+    return _build_edge(_WORKER_SCENARIO, _WORKER_FIELD, source, target,
+                       _WORKER_GENERATOR_CONFIG, _WORKER_PARETO_KWARGS)
+
+
 def build_all_pairs_library(scenario, field, *, generator_config=None,
-                            pareto_kwargs=None, drl_candidates=None):
+                            pareto_kwargs=None, drl_candidates=None,
+                            workers=1):
     """Build the frozen all-pairs directed segment library.
 
     Produces exactly ``K(K+1)`` task edges.  Every generator family that
@@ -257,6 +296,11 @@ def build_all_pairs_library(scenario, field, *, generator_config=None,
     mapping ``{(source, target): [SegmentCandidate, ...]}`` of DRL baseline
     entries (labeled with :func:`drl_generator_label`); they are stored verbatim
     after pruning and never dropped.
+
+    ``workers`` controls the process-pool size for the per-edge loop (``None``
+    means "all CPUs").  The edge build is pure (RNG-free) and independent across
+    edges, so ``workers > 1`` reproduces the sequential result bit-for-bit and
+    only changes wall time.
     """
     generator_config = (generator_config if generator_config is not None
                         else DEFAULT_GENERATOR_CONFIG)
@@ -265,16 +309,23 @@ def build_all_pairs_library(scenario, field, *, generator_config=None,
     pareto_kwargs.setdefault("delta_t_s", scenario.limits.delta_t_s)
     drl_candidates = drl_candidates or {}
 
+    edges = _legal_edges(scenario.n_tasks)
+    if workers is None:
+        workers = os.cpu_count() or 1
+    if workers > 1 and len(edges) > 1:
+        with ProcessPoolExecutor(
+                max_workers=workers,
+                initializer=_edge_worker_init,
+                initargs=(scenario, field, generator_config, pareto_kwargs)) as ex:
+            built = list(ex.map(_edge_worker_build, edges))
+    else:
+        built = [_build_edge(scenario, field, source, target,
+                             generator_config, pareto_kwargs)
+                 for (source, target) in edges]
+
     candidates = {}
-    for (source, target) in _legal_edges(scenario.n_tasks):
-        rankable, non_rankable = _generate_edge_candidates(
-            scenario, field, source, target, generator_config)
-        pruned = pareto_prune(rankable, **pareto_kwargs)
-        pruned = _family_floor(pruned, rankable,
-                               pareto_kwargs.get("delta_t_s",
-                                                 scenario.limits.delta_t_s))
-        extra = list(non_rankable) + list(drl_candidates.get((source, target), ()))
-        candidates[(source, target)] = tuple(pruned) + tuple(extra)
+    for edge, cands in built:
+        candidates[edge] = tuple(cands) + tuple(drl_candidates.get(edge, ()))
 
     return SegmentLibrary(candidates=candidates, map_seed=scenario.map_seed,
                           task_seed=scenario.task_seed, world_hash=field.world_hash)
