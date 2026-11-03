@@ -51,7 +51,7 @@
 U=3 启动命令（场景 X∈{42,43,44} 逐个顺序跑，每场景独立 run-id）：
 
 ```bash
-.venv\Scripts\python experiment/run_stc_main.py --uav-nums 3 --map-seeds X --task-seeds X --method-seeds 0,1,2,3,4 --run-id formal-u3-sX-win
+.venv\Scripts\python experiment/run_stc_main.py --uav-nums 3 --map-seeds X --task-seeds X --method-seeds 0,1,2,3,4 --run-id formal-u3-sX-win --workers 16
 ```
 
 成本预警：Mac 上 U=2 实测为库构建 ~2h + Proposed ~2.3h/seed（1000 迭代）。K=30 的边数是
@@ -73,8 +73,9 @@ U=3 启动命令（场景 X∈{42,43,44} 逐个顺序跑，每场景独立 run-i
 - **本机环境**：Windows 11 x86_64 (i5-12500H) · Python 3.13.14（uv 安装）· 锁定栈
   （numpy 2.5.4 / scipy 1.18.1 / torch 2.15.0 CPU / matplotlib 3.11.2 / pytest 9.2.0）
 - run-id 命名约定：`formal-u3-sX-win`
-- 已完成：`feat/win` 分支创建、win-mac.md 初稿、环境初始化（venv + 锁定栈 + 全量测试 + 零陷锚重钉）
-- 进行中：U=3 X=42 探针（run-id `formal-u3-s42-win`，后台运行中，起跑 2026-11-03 10:11）
+- 已完成：`feat/win` 分支创建、win-mac.md 初稿、环境初始化（venv + 锁定栈 + 全量测试 + 零陷锚重钉）、并行化（库构建 + 种子循环，TDD 确定性回归锁定逐位一致，全量 464 passed）
+- 进行中：U=3 X=42 探针（run-id `formal-u3-s42-win`，`--workers 16` 并行，后台运行中，重启 2026-11-03 23:42）
+- 备注：首次串行 run（10:11 起，12h 库构建未完成）已中止；旧 run 隔离于 `results/runs_failed/formal-u3-s42-win-aborted-20261103/`
 - 待办：U=3 场景 43/44 排程（视 X=42 实测成本）、D1/D2 修复（scale 前置）
 
 ## 7. 同步节奏
