@@ -177,6 +177,70 @@ def _load_sac_policy(checkpoint_path, scenario):
     return policy, digest, ""
 
 
+def _load_actor_policy(model, checkpoint_path, scenario):
+    """Load and validate a TD3/DDPG policy against the STC SI environment.
+
+    TD3 and DDPG share the deterministic ``Actor`` from ``segment/td3.py``
+    (layers ``l1..l4`` plus registered ``action_scale``/``action_bias``
+    buffers), so one loader validates both.  Returns ``(policy, digest,
+    reason)`` with the same contract as :func:`_load_sac_policy`: the buffers
+    encode the training units, so a legacy 100-m/Mbit checkpoint is rejected.
+    """
+    path = Path(checkpoint_path)
+    try:
+        is_file = path.is_file()
+    except (OSError, ValueError) as exc:
+        return None, "", "%s checkpoint path is not readable: %r" % (model, exc)
+    if not is_file:
+        return None, "", "%s checkpoint file is missing: %s" % (model,
+                                                                checkpoint_path)
+
+    import torch
+    try:
+        ckpt = torch.load(str(path), map_location="cpu")
+    except Exception as exc:
+        return None, "", "%s checkpoint is not torch-loadable: %r" % (model, exc)
+    if not isinstance(ckpt, dict) or "actor" not in ckpt:
+        return None, "", "%s checkpoint is missing the actor state_dict" % model
+    actor = ckpt["actor"]
+    for key in ("l1.weight", "l2.weight", "l3.weight", "l4.weight",
+                "action_scale", "action_bias"):
+        if key not in actor:
+            return None, "", ("checkpoint is not a %s actor (missing %r)"
+                              % (model, key))
+    if int(actor["l1.weight"].shape[-1]) != 7 or int(actor["l4.weight"].shape[0]) != 2:
+        return None, "", "%s checkpoint state/action dims are not (7, 2)" % model
+
+    v_max = float(scenario.limits.v_max_mps)
+    scale = np.asarray(actor["action_scale"], dtype=float)
+    bias = np.asarray(actor["action_bias"], dtype=float)
+    expected_scale = np.array([v_max / 2.0, math.pi])
+    expected_bias = np.array([v_max / 2.0, math.pi])
+    if not (np.allclose(scale, expected_scale, rtol=1e-2, atol=1e-2)
+            and np.allclose(bias, expected_bias, rtol=1e-2, atol=1e-2)):
+        return None, "", (
+            "%s checkpoint action bounds %s are not the STC SI single-segment "
+            "environment (expected v in [0, %.1f] m/s); a legacy 100-m/Mbit "
+            "statistical-field checkpoint is incompatible"
+            % (model, list(scale), v_max))
+
+    max_action = np.array([v_max, 2.0 * math.pi], dtype=np.float32)
+    min_action = np.array([0.0, 0.0], dtype=np.float32)
+    if model == "td3":
+        from segment.td3 import TD3
+        policy = TD3(7, 2, max_action, min_action)
+    else:
+        from segment.ddpg import DDPG
+        policy = DDPG(7, 2, max_action, min_action)
+    try:
+        policy.load(str(path))
+    except Exception as exc:
+        return None, "", ("%s checkpoint does not load into the STC policy: %r"
+                          % (model, exc))
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return policy, digest, ""
+
+
 def _rollout_drl_candidate(scenario, field, policy, source, target, data_bits,
                            generator):
     """Deterministic rollout of a DRL policy into one SI ``SegmentCandidate``."""
@@ -204,7 +268,8 @@ def _rollout_drl_candidate(scenario, field, policy, source, target, data_bits,
     hold = tuple(positions[-2]) if len(positions) >= 2 else tuple(positions[0])
     return _build_candidate(scenario, field, source, target, generator,
                             positions, hold, data_bits, rankable,
-                            candidate_id="sac_%d_%d" % (source, target))
+                            candidate_id="%s_%d_%d" % (generator.split(":")[1],
+                                                       source, target))
 
 
 def _produce_drl_segment_candidates(checkpoint_path, scenario, field, model):
@@ -212,7 +277,9 @@ def _produce_drl_segment_candidates(checkpoint_path, scenario, field, model):
         return SacCandidateResult(
             "unavailable", {}, "%s checkpoint is not configured (no path)" % model,
             "", str(checkpoint_path or ""))
-    policy, digest, reason = _load_sac_policy(checkpoint_path, scenario)
+    loader = (_load_sac_policy if model == "sac"
+              else lambda cp, sc: _load_actor_policy(model, cp, sc))
+    policy, digest, reason = loader(checkpoint_path, scenario)
     if policy is None:
         return SacCandidateResult("unavailable", {}, reason, "",
                                   str(checkpoint_path))
@@ -236,3 +303,16 @@ def produce_sac_segment_candidates(checkpoint_path, scenario, field):
 def load_sac_candidates(checkpoint_path, scenario, field):
     """Alias of :func:`produce_sac_segment_candidates` (loading entry point)."""
     return produce_sac_segment_candidates(checkpoint_path, scenario, field)
+
+
+def produce_drl_segment_candidates(model, checkpoint_path, scenario, field):
+    """Produce per-edge DRL candidates for ``model`` in {"sac","td3","ddpg"}.
+
+    Missing/incompatible checkpoints yield an explicit ``unavailable`` result;
+    no substitute trajectory family is ever produced.
+    """
+    model = str(model).lower()
+    if model not in ("sac", "td3", "ddpg"):
+        raise ValueError("unknown DRL model %r" % model)
+    return _produce_drl_segment_candidates(checkpoint_path, scenario, field,
+                                           model=model)

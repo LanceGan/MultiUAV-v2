@@ -39,7 +39,7 @@ from segment.stc.generators import (
 )
 from segment.stc.graph_search import astar_candidates
 from segment.stc.radio import PerSectorRadioField
-from segment.stc.sac_candidates import produce_sac_segment_candidates
+from segment.stc.sac_candidates import produce_drl_segment_candidates
 from segment.stc.scenario import load_stc_scenario
 from segment.stc.slsqp_refine import candidate_cost, refine_candidate
 
@@ -164,9 +164,9 @@ def _unavailable_record(gen, reason):
 def run_segment_gate(scenario, field, generator_config=None, drl_checkpoints=None):
     """Run the RQ1 pairwise segment gate and return ``{"records", "summary"}``.
 
-    Deterministic generators are always evaluated; SAC is produced only from a
-    validated SI checkpoint; TD3/DDPG record an explicit ``unavailable`` (no
-    compatible production path).
+    Deterministic generators are always evaluated; each DRL model (SAC/TD3/
+    DDPG) is produced only from a validated SI checkpoint and otherwise records
+    an explicit ``unavailable`` — no substitute trajectory family.
     """
     drl_checkpoints = dict(drl_checkpoints or {})
     generator_config = generator_config or DEFAULT_GATE_CONFIG
@@ -179,21 +179,25 @@ def run_segment_gate(scenario, field, generator_config=None, drl_checkpoints=Non
             gen, scenario, field, spec, generator_config)
         evaluated[gen] = (per_edge, n_candidates, compute)
 
-    # SAC timing includes checkpoint load + policy rollout (recovery #5)
-    sac_start = time.perf_counter()
-    sac_result = produce_sac_segment_candidates(drl_checkpoints.get("SAC"),
-                                                scenario, field)
-    sac_per_edge = {}
-    sac_n_candidates = 0
-    if sac_result.status == "available":
+    # DRL timing includes checkpoint load + policy rollout (recovery #5)
+    drl_results = {}
+    for model in ("SAC", "TD3", "DDPG"):
+        drl_start = time.perf_counter()
+        result = produce_drl_segment_candidates(
+            model.lower(), drl_checkpoints.get(model), scenario, field)
+        drl_results[model] = result
+        if result.status != "available":
+            continue
+        per_edge = {}
+        n_candidates = 0
         for (src, tgt) in edges:
-            cands = sac_result.candidates[(src, tgt)]
-            sac_n_candidates += len(cands)
+            cands = result.candidates[(src, tgt)]
+            n_candidates += len(cands)
             best = min(cands, key=lambda c: candidate_cost(
                 c, scenario.limits.delta_t_s))
-            sac_per_edge[(src, tgt)] = evaluate_segment(scenario, best, field, spec)
-        evaluated[drl_generator_label("sac", sac_result.checkpoint_hash)] = (
-            sac_per_edge, sac_n_candidates, time.perf_counter() - sac_start)
+            per_edge[(src, tgt)] = evaluate_segment(scenario, best, field, spec)
+        evaluated[drl_generator_label(model.lower(), result.checkpoint_hash)] = (
+            per_edge, n_candidates, time.perf_counter() - drl_start)
 
     # common-feasible edge intersection across every evaluated generator
     common = None
@@ -208,18 +212,16 @@ def run_segment_gate(scenario, field, generator_config=None, drl_checkpoints=Non
         records.append(_aggregate(gen, per_edge, n_candidates, compute, common,
                                   field.world_hash))
 
-    if sac_result.status == "available":
-        label = drl_generator_label("sac", sac_result.checkpoint_hash)
-        per_edge, n_candidates, compute = evaluated[label]
-        records.append(_aggregate(label, per_edge, n_candidates, compute, common,
-                                  field.world_hash,
-                                  checkpoint_hash=sac_result.checkpoint_hash))
-    else:
-        records.append(_unavailable_record("SAC", sac_result.reason))
-
-    for model in ("TD3", "DDPG"):
-        records.append(_unavailable_record(
-            model, "%s checkpoint production is not available" % model))
+    for model in ("SAC", "TD3", "DDPG"):
+        result = drl_results[model]
+        if result.status == "available":
+            label = drl_generator_label(model.lower(), result.checkpoint_hash)
+            per_edge, n_candidates, compute = evaluated[label]
+            records.append(_aggregate(label, per_edge, n_candidates, compute,
+                                      common, field.world_hash,
+                                      checkpoint_hash=result.checkpoint_hash))
+        else:
+            records.append(_unavailable_record(model, result.reason))
 
     summary = {
         "n_methods": len(records),
@@ -238,15 +240,21 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_args(parser)
     parser.add_argument("--sac-checkpoint", default=None)
+    parser.add_argument("--td3-checkpoint", default=None)
+    parser.add_argument("--ddpg-checkpoint", default=None)
     args = parser.parse_args(argv)
     try:
         cfg = resolve_runner_config(args, DEFAULT_CONFIG)
     except (OSError, ValueError, TypeError) as exc:
         parser.error(str(exc))
 
-    if args.sac_checkpoint is not None:
+    cli_ckpts = {"SAC": args.sac_checkpoint, "TD3": args.td3_checkpoint,
+                 "DDPG": args.ddpg_checkpoint}
+    if any(v is not None for v in cli_ckpts.values()):
         cfg["drl_checkpoints"] = dict(cfg["drl_checkpoints"])
-        cfg["drl_checkpoints"]["SAC"] = args.sac_checkpoint
+        for model, path in cli_ckpts.items():
+            if path is not None:
+                cfg["drl_checkpoints"][model] = path
 
     if args.dry_run:
         print("RQ1 segment gate matrix: generators=%s drl=%s" % (
