@@ -43,20 +43,19 @@
 
 | 实验族 | 状态 |
 |---|---|
-| **U=3 正式切片（K=30、5 km、5 基站、930 边）** | **建议首个任务**，待启动 |
-| U=4 切片（K=40、6 km） | 待定（看 U=3 实测成本） |
+| ~~U=3 正式切片（K=30、5 km、5 基站、930 边）~~ | **已交还 Mac 跑**（负责人 2026-11-04 决定） |
+| U=4 切片（K=40、6 km） | 待定 |
 | RQ5 scale/消融正式矩阵 | 待定；先修 D1/D2（见 pilot 报告 §3）再启动 |
 | DRL 多 train_seed（≥5）× 多地图训练 | 可给 Windows；入口 `experiment/train_stc_drl.py`，~1 小时/算法/seed |
 
-U=3 启动命令（场景 X∈{42,43,44} 逐个顺序跑，每场景独立 run-id）：
+**U=3 实测成本（Windows i5-12500H，供 Mac 侧排程参考）**：
+- 航段库构建（16 核并行）：**~2.2h**（串行 12h+）
+- proposed_stc_alns：**~20h+/seed**（K=30；K=20 实测 2.27h，超线性 ~9×）
+- 5 seed 并行（各 1 核）：种子循环 ~20h+；单场景并行 ~22h
 
-```bash
-.venv\Scripts\python experiment/run_stc_main.py --uav-nums 3 --map-seeds X --task-seeds X --method-seeds 0,1,2,3,4 --run-id formal-u3-sX-win --workers 16
-```
-
-成本预警：Mac 上 U=2 实测为库构建 ~2h + Proposed ~2.3h/seed（1000 迭代）。K=30 的边数是
-2.2 倍、时间线更长，单场景可能 20h+；i5-12500H 单核性能与 M 系接近但持续负载注意散热降频。
-先跑一个场景当探针、记录各方法耗时，再决定排程。
+**关键提示**：并行化（`--workers`）代码在 `feat/win`，未合入 `feat/mac`；Mac 若直接用
+feat/mac 串行跑 U=3，库构建 12h+ + proposed ~20h×5 ≈ **~112h/场景**。是否把并行化移植到
+feat/mac 由负责人决定。
 
 ## 5. 运行纪律（Windows 侧，与 Mac 侧一致）
 
@@ -74,9 +73,10 @@ U=3 启动命令（场景 X∈{42,43,44} 逐个顺序跑，每场景独立 run-i
   （numpy 2.5.4 / scipy 1.18.1 / torch 2.15.0 CPU / matplotlib 3.11.2 / pytest 9.2.0）
 - run-id 命名约定：`formal-u3-sX-win`
 - 已完成：`feat/win` 分支创建、win-mac.md 初稿、环境初始化（venv + 锁定栈 + 全量测试 + 零陷锚重钉）、并行化（库构建 + 种子循环，TDD 确定性回归锁定逐位一致，全量 464 passed）
-- 进行中：U=3 X=42 探针（run-id `formal-u3-s42-win`，`--workers 16` 并行，后台运行中，重启 2026-11-03 23:42）
-- 备注：首次串行 run（10:11 起，12h 库构建未完成）已中止；旧 run 隔离于 `results/runs_failed/formal-u3-s42-win-aborted-20261103/`
-- 待办：U=3 场景 43/44 排程（视 X=42 实测成本）、D1/D2 修复（scale 前置）
+- 进行中：—（U=3 已交还 Mac 跑）
+- 备注①：首次串行 run（10:11 起，12h 库构建未完成）已中止，隔离于 `results/runs_failed/formal-u3-s42-win-aborted-20261103/`
+- 备注②：第二次并行 run（23:42 起，库构建 2.2h 完成；种子循环 19.5h 时 proposed 仍 ~20h+/seed 未完成）已中止，隔离于 `results/runs_failed/formal-u3-s42-win-aborted-2nd-20261104/`
+- 待办：D1/D2 修复（scale 前置）；并行化代码在 feat/win（未合入 feat/mac），是否移植由负责人决定
 
 ## 7. 同步节奏
 
