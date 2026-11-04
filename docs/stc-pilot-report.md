@@ -151,3 +151,54 @@ ALNS 1000 迭代。run 密封 success（6 产物）。**单 seed 单场景，方
 ② 三算法作为 DRL 航段生成器进 RQ1 同边对比，按 spec §8.4 预注册门控判定升级与否
 （负责人指示：若效果更好可不视作基线）；③ TD3/DDPG 的加载器接线需改现有文件，
 待首片收官后实施。
+
+## 附录 B：U=2 正式首片结果（2026-11-04，三场景密封）
+
+**口径**：U=2、K=20、200m 正式场、六系统方法 × 5 method seed，场景对
+(map,task) ∈ {(42,42),(43,43),(44,44)}，密封 run：`formal-u2-s42` / `formal-u2-s43` /
+`formal-u2-s44-r2`。**执行事件如实记录**：s44 首跑于 17/30 处被 Claude 会话重启连带
+终止（后台子进程随会话退出），残迹隔离于 `runs_failed/formal-u2-s44-aborted-session`；
+r2 以 nohup 脱管重跑，**seed 0/1 结果与首跑逐位一致**（全管线确定性旁证）。
+
+### B.1 六方法 × 5 seed 汇总（obj 均值±总体标准差；T/D 为可行解均值，秒）
+
+| 方法 | s42 | s43 | s44 |
+|---|---|---|---|
+| Region-Distance-Straight | 0/5 可行 | 0/5 可行 | 0/5 可行 |
+| Shortest-Balanced-Graph | 3/5；1.0455±0.008 | 1/5；1.1279 | 0/5 可行 |
+| Jia-EBTAS-style | 5/5；0.9908±0.019 | 5/5；0.9990±0.034 | 5/5；1.0261±0.038 |
+| GATSAC-style | unavailable（诚实声明，无 SI checkpoint） | 同 | 同 |
+| Library-Open-Loop | 5/5；0.9102±0.076 | 5/5；0.9879±0.072 | 5/5；0.9149±0.040 |
+| **Proposed STC-ALNS** | **5/5；0.7204±0.003** | **5/5；0.7968±0.005** | **5/5；0.7584±0.004** |
+
+（s44 的 Shortest-Balanced-Graph 0/5：该图下图搜索候选路线全部违反路线级约束，
+诚实不可行；T/D 细目见各 run 的 raw_records.json。）
+
+### B.2 核心配对对比（Proposed vs Library-Open-Loop，同场景同 seed）
+
+- **15/15 配对点全部改善**：目标值下降 7.0%~29.4%，**总均值 18.7%**
+  （s42 20.3% / s43 18.9% / s44 16.9%）；
+- **稳定性**：Proposed 场景内散布 0.003–0.005，开环 0.040–0.076（小 10–25 倍）——
+  冲突反馈闭环同时消除初始解随机性影响；
+- vs Jia-EBTAS-style：三场景均值下降 19.6%~27.3%；
+- T 与 D 同向改善（如 s42：T 348→265s、D 264→216s），非此消彼长。
+
+### B.3 证据链状态
+
+- 8 张正式图 + `figures_provenance.json` + `reporting_bundle.json` 已由
+  `plots/plot_stc_results.py` 从三个密封 run 生成；
+- **版本一致性处置**：探针 run（D4 修复前代码）归档 `results/runs_probe/`；
+  s42/s43（head `a6e2c7b3…`）与 s44-r2（head `9de980f3…`）经
+  `git diff a6e2c7b 9de980f -- segment/ experiment/run_stc_main.py
+  experiment/stc_common.py` 核验**评价器相关代码零差异**（唯一差异为从未被 runner
+  导入的新文件 `segment/stc/drl_training.py`），以 `--heads-equivalent` 显式声明，
+  声明已写入每张图的 provenance；
+- **Gate 报告**（results/figs/formal-slice-gate-report.json）：Gate 0 PASS（全量
+  测试）、Gate 4 PASS（密封溯源+bundle 认证）、Gate 1/2/3 NOT_RUN（正式 RQ1/RQ3/
+  消融尚未执行，属诚实中间状态）、总体 NOT_RUN（无 FAIL）。
+
+### B.4 单元成本实测（排程依据）
+
+库构建 ~1.6–2h/场景；Proposed ~2.0–2.6h/seed（1000 迭代）；确定性基线秒~分级；
+单场景全套（5 seed）~12–14h。协议最低要求的 5 场景对还差 2 个（s45/s46，
+需扩 seeds 并获负责人批准，预算 ~27h）。
