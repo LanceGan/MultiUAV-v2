@@ -12,6 +12,7 @@ results/runs/**/.tmp-*
 results/runs/
 results/models/
 results/figs/
+results/figs_u2_main_*/
 
 # failed/timeout run quarantine (preserved evidence, outside Gate 4 scan scope)
 results/runs_failed/
