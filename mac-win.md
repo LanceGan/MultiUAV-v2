@@ -2,14 +2,14 @@
 
 > 读者：Windows 机器上的开发者/协作 agent。本文档是两台机器分工的**权威契约**，
 > 由 Mac 侧维护（分支 `feat/mac`）；Windows 侧在 `feat/win` 上工作。
-> 更新时间：2026-11-02。
+> 更新时间：2026-11-04。
 
 ## 1. 机器与分支
 
 | 机器 | 平台 | 分支 | 角色 |
 |---|---|---|---|
-| Mac（参考机） | macOS 15.7 arm64, Apple Silicon | `feat/mac` | U=2 实验族 + 其一切补充 run；DRL si-v1 已训产物；文档主干 |
-| Windows 新机 | Windows 11, i5-12500H（4P+8E 12 核） | `feat/win` | 领取**整族**新实验（见 §4 分配） |
+| Mac（参考机） | macOS 15.7 arm64, Apple Silicon | `feat/mac` | 执行全部正式实验（U=2/3/4 及其补充）；文档主干 |
+| Windows 新机 | Windows 11, i5-12500H（4P+8E 12 核） | `feat/win` | **只负责论文写作**，不再启动或补充正式实验 |
 
 两分支**互不合并、互不 rebase**，只向 `origin` 各自推送；汇合时机与方式由项目负责人决定。
 
@@ -40,21 +40,22 @@
    **不要**把这个改动合回 feat/mac；两分支各钉各的锚。
 5. 文档里的 `./.venv/bin/python` 在 Windows 对应 `.venv\Scripts\python`。
 
-## 4. 实验族分配（当前）
+## 4. 实验族分配（2026-11-04 时间盒化决定）
 
-| 实验族 | 机器 | 状态 |
+| 实验族 | 机器 | 当前范围 |
 |---|---|---|
-| U=2 正式切片（s42/s43/s44，K=20） | **Mac** | s42 已密封；s43/s44 运行中（预计 11-03 下午收官） |
-| U=2 的 GATSAC 补充 run、RQ1 DRL 生成器对比 | **Mac**（必须同机） | 待切片收官 |
-| DRL si-v1 三算法训练（SAC/TD3/DDPG） | **Mac** | 已完成（附录 C） |
-| **U=3 正式切片（K=30、5 km、5 基站、930 边）** | **Windows（建议首个任务）** | 待启动：`run_stc_main --uav-nums 3 --map-seeds X --task-seeds X --method-seeds 0,1,2,3,4`，场景 X∈{42,43,44} 逐个顺序跑，每场景独立 `--run-id formal-u3-sX-win` |
-| U=4 切片（K=40、6 km） | 待定（看 U=3 实测成本） | — |
-| RQ5 scale/消融正式矩阵 | 待定 | **先修 D1/D2**（超时/检查点粒度缺陷，见 pilot 报告 §3），未修前不要启动 scale |
-| DRL 多 train_seed（协议要求 ≥5）× 多地图训练 | 可给 Windows | 入口 `experiment/train_stc_drl.py`，~1 小时/算法/seed |
+| U=2 主实验（s42/s43/s44，K=20） | **Mac** | 三场景 × method seeds 0–4，六种完整方法 |
+| U=2 GATSAC 补充 | **Mac** | s42 已完成；s43 运行中；s44 待补 |
+| U=3 规模探针 | **Mac** | 只跑 s42，`method_seed=0`，六种完整方法 |
+| U=4 规模探针 | **Mac** | 只跑 s42，`method_seed=0`，六种完整方法 |
+| RQ1/RQ3 | **Mac** | 各一个代表场景 |
+| RQ5 消融 | **Mac** | s42 单场景 × method seeds 0–4 |
+| exact benchmark | **Mac** | K=4/6/8 |
+| 论文写作 | **Windows** | 只读 Mac 冻结结果，不运行实验 |
 
-**U=3 成本预警**：Mac 上 U=2 实测为库构建 ~2h + Proposed ~2.3h/seed（1000 迭代）。
-K=30 的边数是 2.2 倍、时间线更长，单场景可能 20h+；i5-12500H 单核性能与 M 系接近
-但持续负载注意散热降频。先跑一个场景当探针、记录各方法耗时，再决定排程。
+已取消：s45/s46、U=3/U=4 多场景、U=4 五场景矩阵、纯 UAV 数量五场景族、
+完整参数敏感性和 DRL 多 train-seed 正式矩阵。论文必须将 U=2 解释为
+three-scene evidence，将 U=3/U=4 解释为 single-seed scalability probes。
 
 ## 5. 运行纪律（与 Mac 侧一致）
 
@@ -67,16 +68,18 @@ K=30 的边数是 2.2 倍、时间线更长，单场景可能 20h+；i5-12500H �
   电池+合盖休眠曾让 5 小时墙钟只算了 57 分钟）；插电运行；
 - 笔记本跑夜间任务时确认电源计划为"高性能"，避免 E 核调度拖慢单线程求解。
 
-## 6. 当前进度快照（截至 2026-11-02 16:30，Mac 侧）
+## 6. 当前进度快照（截至 2026-11-04）
 
 - Task 1–10 全部验收；bounded pilot 完成（Gate 0/1/2/4 PASS，Gate 3 为冒烟尺度
   效应 FAIL，见 `docs/stc-pilot-report.md`）；
-- 正式探针 + s42 已密封：Proposed 0.7204±0.003 vs 开环 0.9102±0.076 vs Jia
-  0.9908（5 seed，配对均值 −20.3%，5/5 为负）；s43 seed 0 复现 −21.9%；
+- U=2 s42/s43/s44 三个主实验均已密封；15/15 配对点改善，平均目标值下降 18.7%；
+- U=2 主实验 8 张正式图、provenance 和 reporting bundle 已重新生成于
+  `results/figs_u2_main_20261104/`；
+- GATSAC s42 补充已完成；s43 运行中，s44 待补；
+- U=3/U=4 s42 单 seed 规模探针已启动，六种完整系统方法全部保留；
 - DRL si-v1：SAC 95.2% / TD3 96.4% / DDPG 91.7%（held-out best），SAC checkpoint
   过正式加载器（SHA `d6d4b339…`）；
-- 待办：D1/D2 修复、TD3/DDPG 加载器接线、GATSAC 补充 run、附录 B、
-  seeds.json 扩到 5 对场景（协议最低要求）。
+- 已完成：D1/D2 修复、TD3/DDPG 加载器、并行化与磁盘缓存、论文范围更新。
 
 ## 7. 同步节奏
 

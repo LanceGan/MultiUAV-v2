@@ -3,6 +3,28 @@
 STC-ALNS（Spatio-Temporal Conflict-Aware ALNS）最终实验的权威协议。所有正式
 结果只从冻结 run 读取，任何表图不含硬编码指标值。
 
+## 2026-11-04 时间盒化实验设计（覆盖旧矩阵最低要求）
+
+经项目负责人确认，本轮以两天内形成可分析论文为目标，实验范围调整为：
+
+- **U=2 核心证据**：s42/s43/s44 三个配对场景 × method seeds 0–4，六种完整系统
+  方法；U=2 结果用于主要方法对比。
+- **U=3/U=4 规模探针**：各只运行 s42 一个 map/task 场景，固定 `method_seed=0`，
+  但保留六种完整系统方法。结果只解释为 single-seed scalability probes，不用于
+  跨地图或多 seed 规模泛化。
+- **RQ1/RQ3**：各运行一个代表场景。
+- **RQ5**：机制消融使用 s42 单场景 × method seeds 0–4；不运行完整参数族和
+  Monte Carlo 正式矩阵。
+- **exact benchmark**：K=4/6/8。
+- **明确取消**：s45/s46、U=3/U=4 多场景、U=4 五场景矩阵、纯 UAV 数量五场景族、
+  完整敏感性矩阵和 DRL 多 train-seed 正式矩阵。
+- **实验执行机器**：所有正式实验统一由 Mac 参考机运行；Windows 只负责论文写作，
+  不再产生或补充正式实验结果。
+
+论文必须明确写出 three-scene U=2 evidence 与 single-seed U=3/U=4 scale probes 的
+适用边界，不得声称已完成完整五场景或跨地图规模矩阵。以下旧的最低矩阵要求仅保留
+为历史契约，不再约束本轮执行。
+
 ## 固定假设（Final Research Contract）
 
 - **全知 CKM**：规划前已知完整 A2G 上行 + G2A 下行电磁地图。
@@ -57,8 +79,8 @@ J = w_T·T/T_ref + w_D·D/D_ref,   w_T + w_D = 1（默认 0.5 / 0.5）
 - `map_seed` 地形/建筑/无线图；`task_seed` 巡检点与数据量；
   `method_seed` ALNS/启发式搜索随机性；`train_seed` 仅学习型基线。
 
-正式矩阵最低要求：5 个配对场景（不同 map/task seed）× 5 个 method seed；
-学习型基线至少 5 个 train_seed checkpoint，否则显式标注为单 checkpoint 受限基线。
+正式执行矩阵以本节开头的时间盒化设计为准。学习型基线使用单个
+`train_seed=42` checkpoint，并显式标注为 limited single-checkpoint baseline。
 
 ## 统计与失败策略
 

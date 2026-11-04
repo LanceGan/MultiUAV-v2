@@ -1,5 +1,21 @@
 # CLAUDE.md — 多无人机巡检系统重构（MultiUAV_New）
 
+## 🔴 2026-11-04 最终时间盒化范围（优先于下方旧快照）
+
+- **所有正式实验统一由 Mac 运行**；Windows 只负责论文写作，不再启动或补充实验。
+- U=2 是论文核心证据：s42/s43/s44 三场景 × method seeds 0–4，六种完整系统方法。
+- U=3/U=4 是 single-seed 规模探针：各只跑 s42、固定 `method_seed=0`，但保留
+  六种完整系统方法。
+- RQ1/RQ3 各跑一个代表场景；RQ5 只做 s42 单场景 × method seeds 0–4；
+  exact benchmark 只做 K=4/6/8。
+- 明确取消 s45/s46、U=3/U=4 多场景、U=4 五场景矩阵、完整参数敏感性和
+  DRL 多 train-seed 正式矩阵。
+- U=2 主实验图已生成于 `results/figs_u2_main_20261104/`（8 图 + provenance +
+  reporting bundle），只由 `formal-u2-s42/s43/s44-r2` 三个 sealed run 生成。
+- 当前运行：GATSAC U=2 s43、U=3 s42 single-seed、U=4 s42 single-seed。
+- 已验证：并行化与磁盘缓存全量测试 485 passed；论文写作范围见
+  `论文写作指导.md` 顶部最新范围。
+
 ## 🟢 交接快照（2026-11-04，本节为最新权威状态，接手 session 从这里开始）
 
 > 本节总结 2026-10-31 ~ 11-04 的完整工作会话（环境迁移 → Task 10 验收 → pilot →
