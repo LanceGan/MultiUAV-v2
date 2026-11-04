@@ -191,8 +191,12 @@ def _eval_methods(sc, field, gen_cfg, method_seed, iterations):
 
 
 def run_scale(base_scenario, field_factory, seed=42, generator_config=None,
-              iterations=30):
-    """Run every single-dimension scale family for both methods."""
+              iterations=30, emit=None):
+    """Run every single-dimension scale family for both methods.
+
+    ``emit``（可选）在每条记录完成 family/variant 标注后立即回调——D2 修复：
+    scale 单场景可跑数小时，逐记录落盘才能在中断/超时后保全进度。
+    """
     gen_cfg = generator_config or {"straight_hold": True}
     records = []
     for family in SCALE_FAMILIES:
@@ -202,6 +206,8 @@ def run_scale(base_scenario, field_factory, seed=42, generator_config=None,
                 rec["family"] = family
                 rec["variant"] = label
                 records.append(rec)
+                if emit is not None:
+                    emit(rec)
     return {"records": records,
             "summary": {"n_families": len(SCALE_FAMILIES),
                         "methods": list(METHODS),
@@ -209,7 +215,7 @@ def run_scale(base_scenario, field_factory, seed=42, generator_config=None,
 
 
 def run_density_scale(base_scenario, field_factory, seed=42, generator_config=None,
-                      iterations=30):
+                      iterations=30, emit=None):
     """System-scale density: task count + region + BS count scale together."""
     gen_cfg = generator_config or {"straight_hold": True}
     limits = base_scenario.limits
@@ -224,6 +230,8 @@ def run_density_scale(base_scenario, field_factory, seed=42, generator_config=No
             rec["variant"] = "U%d_K%d_%.0fkm_BS%d" % (n_uav, n_tasks,
                                                       length_m / 1000.0, n_bs)
             records.append(rec)
+            if emit is not None:
+                emit(rec)
     return {"records": records,
             "summary": {"n_families": 1, "methods": list(METHODS),
                         "record_count": len(records)}}
@@ -245,20 +253,19 @@ def main(argv=None):
     def field_factory(sc):
         return PerSectorRadioField.from_scenario(sc, spacing_m=cfg["spacing_m"])
 
-    def per_scenario(uav_num, map_seed, task_seed):
+    def per_scenario(uav_num, map_seed, task_seed, checkpoint):
         base = load_stc_scenario(uav_num, task_seed=task_seed, map_seed=map_seed)
         base = (small_scenario(base, cfg["smoke_tasks"]) if cfg["smoke"]
                 else base)
-        recs = []
         for method_seed in cfg["method_seeds"]:
             for run_fn in (run_scale, run_density_scale):
-                out = run_fn(base, field_factory, seed=method_seed,
-                             generator_config=cfg["generator_config"],
-                             iterations=cfg["iterations"])
-                recs.extend({**r, "base_uav_num": uav_num,
-                             "base_map_seed": map_seed,
-                             "base_task_seed": task_seed} for r in out["records"])
-        return recs
+                run_fn(base, field_factory, seed=method_seed,
+                       generator_config=cfg["generator_config"],
+                       iterations=cfg["iterations"],
+                       emit=lambda r: checkpoint(
+                           {**r, "base_uav_num": uav_num,
+                            "base_map_seed": map_seed,
+                            "base_task_seed": task_seed}))
 
     def summary_fn(records_all):
         return {"record_count": len(records_all),
@@ -266,7 +273,7 @@ def main(argv=None):
                 "methods": list(METHODS)}
 
     return run_lifecycle("stc_scale", cfg, args.run_id, _matrix(cfg),
-                         per_scenario, summary_fn)
+                         per_scenario, summary_fn, incremental_records=True)
 
 
 def _matrix(cfg):

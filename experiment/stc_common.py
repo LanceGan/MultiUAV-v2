@@ -399,6 +399,10 @@ def run_lifecycle(runner_name, cfg, run_id, matrix, per_scenario, summary_fn,
     def _checkpoint(record):
         records_all.append(record)
         rc.write_bytes(records_name, json_bytes(records_all))
+        # D1（pilot 缺陷）：超时必须在记录粒度生效——scale 的整个参数族矩阵是
+        # 单场景，只在场景边界检查会让 --timeout-s 形同虚设（实测 12.3h 未触发
+        # 7200s 预算）。先持久化本条记录再检查，超预算中止时一条不丢。
+        _check_timeout()
 
     try:
         for idx, key in enumerate(matrix):
