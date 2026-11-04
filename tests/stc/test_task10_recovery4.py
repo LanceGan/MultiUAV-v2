@@ -304,3 +304,35 @@ def test_check_compatible_rejects_mixed_hashes_within_one_variant():
                 "world_hash": "w" * 64}
     with pytest.raises(ValueError):
         check_compatible([rec("1"), rec("2")])
+
+
+# --------------------------------------------------------------------------- #
+# check_same_source：默认严格；显式声明的已证等价 head 组可通过
+# --------------------------------------------------------------------------- #
+
+def _run_with_head(run_id, head):
+    from experiment.run_stc_gates import LoadedRun
+    return LoadedRun(run_id=run_id, experiment="stc_main", status="success",
+                     valid=True, manifest={"git": {"head": head}, "inputs": {}},
+                     artifacts={})
+
+
+def test_same_source_rejects_mixed_heads_by_default():
+    from plots.plot_stc_results import check_same_source
+    runs = [_run_with_head("a", "1" * 40), _run_with_head("b", "2" * 40)]
+    with pytest.raises(ValueError):
+        check_same_source(runs)
+
+
+def test_same_source_accepts_declared_equivalent_heads():
+    from plots.plot_stc_results import check_same_source
+    runs = [_run_with_head("a", "1" * 40), _run_with_head("b", "2" * 40)]
+    assert check_same_source(runs, equivalent_heads=("1" * 40, "2" * 40)) is True
+
+
+def test_same_source_rejects_head_outside_declared_set():
+    from plots.plot_stc_results import check_same_source
+    runs = [_run_with_head("a", "1" * 40), _run_with_head("b", "2" * 40),
+            _run_with_head("c", "3" * 40)]
+    with pytest.raises(ValueError):
+        check_same_source(runs, equivalent_heads=("1" * 40, "2" * 40))

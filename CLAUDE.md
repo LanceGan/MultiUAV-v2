@@ -1,5 +1,100 @@
 # CLAUDE.md — 多无人机巡检系统重构（MultiUAV_New）
 
+## 🟢 交接快照（2026-11-04，本节为最新权威状态，接手 session 从这里开始）
+
+> 本节总结 2026-10-31 ~ 11-04 的完整工作会话（环境迁移 → Task 10 验收 → pilot →
+> 正式首片 → DRL 重训）。下文"设计重构/实验记录"等旧章节是**历史**；
+> 当前方法 = **STC-ALNS**（`segment/stc/`），权威文档优先级：
+> **最终契约**（docs/superpowers/plans/2026-10-25-final-...md）>
+> 协议（docs/stc-experiment-protocol.md）> spec（2026-10-23-tvt-...md）>
+> 新设计文档.md；代码与文档冲突以代码为准。
+
+### 环境与分支（必读）
+
+- **本机 = macOS arm64 参考机**；解释器 `./.venv/bin/python`（锁定栈见
+  `requirements.lock.txt`；2026-10-31 从 Windows 迁移并重定数值基线，见
+  docs/PROJECT_HANDOFF.md §9）。天线零陷回归锚 = 本机环境指纹，换机必挂、属设计行为。
+- **当前分支 `feat/mac`**（已推 origin）；Windows 机将建 `feat/win` 跑新实验族，
+  双机规则见 **mac-win.md**（核心：**同一实验族必须同机**，跨平台浮点不逐位一致）。
+- **commit 一律中文**，尾行 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`。
+- 用户确认过的表述习惯：报告对比用"**目标值下降 X%**"，不说"收益为负"。
+
+### 已完成的里程碑（时间序）
+
+1. **重定基线**（10-31）：`.venv` 锁定栈、天线锚重钉、SAC 加载器 OSError 兜底。
+2. **Task 10 第四轮独立复审通过并验收**：4 项 Important 修复（`41b94d9`：Gate1 跨
+   run 拼接、Gate3 消融 seed 配对、bundle↔provenance 对应、绘图兼容性全族覆盖）
+   + 反例测试 `tests/stc/test_task10_recovery4.py`。
+3. **Bounded pilot**（11-01，docs/stc-pilot-report.md）：Gate 0/1/2/4 PASS；
+   Gate 3 FAIL=纯尺度效应 S1（冒烟 1000m 场全方法 ε_out 超标）。抓到缺陷：
+   **D1/D2（run_lifecycle 超时+检查点只在场景边界生效，未修）**、D3（绘图误伤，已修）、
+   B1（scale 冒烟成本 >12h，预算证伪）。
+4. **正式保真度探针**（11-01）：200m 口径可行性恢复；发现并修复 **D4**（跨族
+   Pareto 剪枝剪绝基线轨迹族 → 族保底，`21ffdaa`）。探针 run 已归档
+   `results/runs_probe/`（修复前代码，仅作 D4 证据）。
+5. **DRL SI 重训**（11-02，用户批准；若效果好可升级为非基线——判据=RQ1 同边对比
+   + spec §8.4 门控）：入口 `experiment/train_stc_drl.py`（新文件，goal-conditioned
+   单段，复用 StcSacEnv）。结果（3000 集、K=20/200m、held-out 84 边）：
+   **SAC 95.2%（稳定）/ TD3 96.4%（尾段 Q 发散，best 机制截峰）/ DDPG 91.7%**；
+   checkpoint 在 `results/models/stc_drl/<algo>_u2_si-v1_best.pth`（SAC 已过
+   `_load_sac_policy` 校验 → GATSAC 基线钥匙）。曲线脚本
+   `plots/plot_stc_drl_training.py`（**默认展示前 2000 集**，用户指示；npz 存全程）。
+6. **U=2 正式首片完成**（11-04 晨）：三场景密封 success——
+   `results/runs/formal-u2-s42 / s43 / s44-r2`（s44 首跑被会话重启杀死，r2 重跑
+   **逐位复现**；残迹在 runs_failed/）。
+
+### 首片核心结果（论文 RQ4 第一份正式证据）
+
+| 场景 | Proposed | Open-Loop | Jia-style | 目标值下降(配对均值) |
+|---|---|---|---|---|
+| s42 | 0.7204±0.003 | 0.9102±0.076 | 0.9908 | 20.3% |
+| s43 | 0.7968±0.005 | 0.9879±0.072 | 0.9990 | 18.9% |
+| s44 | 0.7584±0.004 | 0.9149±0.040 | 1.0261 | 16.9% |
+
+**15/15 配对点全部改善（7.0%~29.4%，均值 18.7%）**；Proposed 跨 seed 散布比开环小
+10~25 倍（闭环=优化器+稳定器双卖点）；region/shortest 基线按物理诚实不可行/部分可行，
+GATSAC 全部诚实 unavailable（待补充 run）。Proposed 单 seed 求解 ~2.0–2.6h（1000 迭代）。
+
+### 正在进行 / 下一步（按序执行，即收官序列）
+
+1. 🔄 **Gate 0–4 报告重跑中**（后台，含全量测试；预期 Gate 0/4 PASS、1/2/3
+   NOT_RUN=诚实状态）。8 张正式图 + provenance + bundle 已生成于 results/figs/。
+2. 附录 B（三场景汇总）写入 docs/stc-pilot-report.md，提交推送。
+3. **D1/D2 修复**（TDD：run_lifecycle 场景内超时检查 + 记录级检查点）——修完才能跑
+   正式 scale/消融；修完后通知 feat/win cherry-pick。
+4. **TD3/DDPG 加载器接线**（sac_candidates.py 泛化多算法 + segment_gate CLI，
+   TDD+全量回归）。
+5. **GATSAC 补充 run** 三场景（`--methods gatsac_style --sac-checkpoint
+   results/models/stc_drl/sac_u2_si-v1_best.pth --method-seeds 0,1,2,3,4`，
+   nohup 脱管；先验证 library_hash 与首片一致）。
+6. **RQ1 正式版**（200m 全生成器+DRL 同台 → §8.4 DRL 升级判定数据）+ **RQ3 正式版**。
+7. 待用户拍板：**seeds 扩到 5 场景对**（协议最低要求，现仅 42/43/44）→ s45/s46
+   （~27h）；正式消融（~18h/场景seed）；UAV 数量族；参数敏感性；精确基准
+   （run_stc_exact.py）；DRL 多 train_seed（可放 Windows）。
+8. Windows 侧（用户自建 feat/win）：首任务 U=3 探针→切片，工单在 mac-win.md §4。
+
+### 运行纪律与陷阱（血泪换来的，新 session 必读）
+
+- **长任务一律 `nohup ... & disown` 脱管 + `caffeinate -s -i -w <pid>`**：后台任务
+  随 Claude 会话退出而死（s44 首跑教训）；电池模式合盖必睡（曾 5.4h 墙钟只算 57min），
+  **插电运行**。监督用 ScheduleWakeup 轮询 manifest/records（心跳提示词保持简短）。
+- **run 目录纪律**：正式 run 只进 `results/runs/`（不可覆盖）；失败/中断 →
+  `runs_failed/`；pilot 归档 → `runs_pilot/` + `figs_pilot/`；探针 → `runs_probe/`。
+  同一 `results/runs/` 扫描域内不得混不同实验批。
+- **版本一致性**：绘图 `check_same_source` 默认拒绝混 git head；已证等价的 head
+  （评价器相关代码 git diff 为空）可用 `--heads-equivalent <全哈希,全哈希>` 显式声明
+  （声明入图 provenance；证明义务在调用方）。首片用
+  `a6e2c7b...,9de980f...`（差异仅为未被导入的新训练文件）。
+- **已知坑**：`run_stc_main` 无 `--timeout-s`；`run_lifecycle`（segment_gate/audit/
+  ablation/scale 用）超时与检查点只在**场景边界**生效（=D1/D2，待修）；
+  `reporting_bundle.json` 写一次性（重出图先删旧 bundle）；`tail` 会吃掉管道退出码
+  （判断成败看输出内容不是 echo）。
+- **论文线**：另一 agent 在 `~/grj/P2` 写 LaTeX（指导=论文写作指导.md；红线：无冻结
+  run 不写数字、pilot/旧代数值禁入、结论由 Gate 决定、GATSAC 标 style reproduction）。
+
+---
+
+
 > 🚨 **设计重构（2026-10-12）**：实验部分已整体重新设计，见 [`新设计文档.md`](新设计文档.md)。
 > 下文"项目概述/实验记录"是**旧三层设计**的历史记录（保留供回溯）；新架构见 **「设计重构」** 一节。
 > 旧代码（三层 + 端到端 DRL 轨迹）**尚未改写**，仍可按旧流程运行。

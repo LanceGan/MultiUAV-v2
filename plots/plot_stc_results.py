@@ -94,16 +94,22 @@ def check_compatible(records):
     return True
 
 
-def check_same_source(runs):
+def check_same_source(runs, equivalent_heads=()):
     """Raise if valid runs come from different source/evaluator versions.
 
     The git head is the source (and therefore evaluator) version: figures must
-    never mix records computed by different code versions.
+    never mix records computed by different code versions.  ``equivalent_heads``
+    is an explicit, caller-declared set of heads whose evaluator-relevant tree
+    has been verified identical (e.g. the only diff is a never-imported new
+    file); the caller must document that proof (commit message / report), and
+    the declaration is recorded into each figure's provenance.  A head outside
+    the declared set still fails.
     """
     heads = {r.manifest.get("git", {}).get("head") for r in runs if r.valid}
     heads.discard(None)
     heads.discard("unknown")
-    if len(heads) > 1:
+    eq = set(equivalent_heads)
+    if len(heads) > 1 and not heads <= eq:
         raise ValueError("runs mix incompatible source versions: %r"
                          % sorted(heads))
     return True
@@ -433,15 +439,16 @@ def _render_rq3(runs, out_dir):
                 "mean absolute error", "RQ3 evaluator approximation error")
 
 
-def render_figures(runs_by_experiment, out_dir):
+def render_figures(runs_by_experiment, out_dir, equivalent_heads=()):
     """Render every available figure from finalized, compatible runs.
 
     ``runs_by_experiment`` maps an experiment name to a list of
     :class:`~experiment.run_stc_gates.LoadedRun`.  Runs within one experiment
-    must share the same source/evaluator version; records within one scenario
-    must share hashes.  Returns the list of written figure paths, writes
-    ``figures_provenance.json``, and writes an immutable content-addressed
-    ``reporting_bundle.json``.
+    must share the same source/evaluator version (or belong to the explicitly
+    declared ``equivalent_heads`` set, see :func:`check_same_source`); records
+    within one scenario must share hashes.  Returns the list of written figure
+    paths, writes ``figures_provenance.json``, and writes an immutable
+    content-addressed ``reporting_bundle.json``.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -451,7 +458,7 @@ def render_figures(runs_by_experiment, out_dir):
         valid = [r for r in runs if r.valid]
         if not valid:
             continue
-        check_same_source(valid)
+        check_same_source(valid, equivalent_heads)
         if experiment == "stc_main":
             records = _concat(runs, "raw_records.json")
             check_compatible(records)
@@ -474,11 +481,14 @@ def render_figures(runs_by_experiment, out_dir):
         else:
             continue
         written += figs
+        src_heads = sorted({r.manifest.get("git", {}).get("head") for r in valid})
         for fig in figs:
             provenance[fig.name] = {
                 "experiment": experiment,
                 "runs": [r.run_id for r in valid],
                 "inputs": {r.run_id: r.manifest.get("inputs", {}) for r in valid},
+                "source_heads": src_heads,
+                "declared_equivalent_heads": sorted(equivalent_heads),
             }
     _write_reporting_bundle(out_dir, written, provenance)
     return written
@@ -544,9 +554,16 @@ def main(argv=None):
     parser.add_argument("--runs-dir", default=None,
                         help="directory of finalized runs (results/runs)")
     parser.add_argument("--out-dir", default="results/figs")
+    parser.add_argument("--heads-equivalent", default=None,
+                        help="逗号分隔的 git head 全哈希：调用方已核验这些版本的"
+                             "评价器相关代码零差异（证据写入提交/报告），组内视为"
+                             "同一版本；默认严格模式")
     args = parser.parse_args(argv)
     if not args.runs and not args.runs_dir:
         parser.error("one of --runs or --runs-dir is required")
+    equivalent_heads = tuple(
+        h.strip() for h in args.heads_equivalent.split(",")) \
+        if args.heads_equivalent else ()
 
     if args.runs_dir:
         from experiment.run_stc_gates import scan_runs
@@ -555,7 +572,7 @@ def main(argv=None):
         runs = load_valid_runs(args.runs)
 
     grouped = _group(runs)
-    written = render_figures(grouped, args.out_dir)
+    written = render_figures(grouped, args.out_dir, equivalent_heads)
     print("wrote %d figure(s) to %s" % (len(written), args.out_dir))
     return 0
 
