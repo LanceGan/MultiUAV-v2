@@ -27,7 +27,9 @@ def rq2_run(monkeypatch, tmp_path):
     spec = default_objective_spec(sc, library.candidates)
     sac = SimpleNamespace(status="unavailable", reason="missing", checkpoint_path="")
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(main, "_build_context", lambda *a: (sc, field, library, spec, sac))
+    monkeypatch.setattr(
+        main, "_build_context",
+        lambda *a: (sc, field, library, library, spec, sac))
     config = tmp_path / "config.json"
     config.write_text(json.dumps({
         "uav_nums": [1], "map_seeds": [7], "task_seeds": [23],

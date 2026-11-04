@@ -299,7 +299,8 @@ def validate_baseline_availability(method, scenario, library, *,
 
 def run_system_baseline(method, scenario, library, field, *, seed=42,
                         method_seed=42, iterations=1000, checkpoint_path=None,
-                        graph_generators=None, solver_config=None):
+                        graph_generators=None, solver_config=None,
+                        objective_spec=None):
     """Run one named complete-system method and return its evaluated result.
 
     Every method is scored through the same :func:`default_objective_spec`
@@ -316,7 +317,11 @@ def run_system_baseline(method, scenario, library, field, *, seed=42,
     family_view, checkpoint = validate_baseline_availability(
         method, scenario, library, checkpoint_path=checkpoint_path,
         graph_generators=graph_generators)
-    objective_spec = default_objective_spec(scenario, candidates)
+    objective_spec = (
+        objective_spec
+        if objective_spec is not None
+        else default_objective_spec(scenario, candidates)
+    )
 
     if spec.key == "proposed_stc_alns":
         seg = _seg_view(library, scenario, field)

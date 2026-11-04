@@ -181,7 +181,9 @@ def test_main_checkpoints_each_method_and_fails_honestly(monkeypatch, tmp_path, 
     result = evaluate_solution(sc, library.candidates, sol, field, reference)
     sac = SimpleNamespace(status="unavailable", reason="missing", checkpoint_path="")
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(main, "_build_context", lambda *a: (sc, field, library, reference, sac))
+    monkeypatch.setattr(
+        main, "_build_context",
+        lambda *a: (sc, field, library, library, reference, sac))
     monkeypatch.setattr(main, "validate_baseline_availability", lambda *a, **kw: None)
 
     def execute(method, *a, **kw):

@@ -321,6 +321,8 @@ def test_main_gatsac_unavailable_without_sac(monkeypatch, tmp_path):
     assert by_method["gatsac_style"]["status"] == "unavailable"
     assert by_method["gatsac_style"]["failure_reason"]
     assert by_method["proposed_stc_alns"]["status"] == "evaluated"
+    assert (by_method["proposed_stc_alns"]["reference_library_hash"]
+            == by_method["proposed_stc_alns"]["library_hash"])
 
 
 def test_main_gatsac_available_with_real_sac_checkpoint(monkeypatch, tmp_path):
@@ -335,6 +337,12 @@ def test_main_gatsac_available_with_real_sac_checkpoint(monkeypatch, tmp_path):
     assert rec["status"] == "evaluated"
     gens = rec["provenance"]["trajectory_generators"]
     assert gens and all(g.startswith("drl:sac:") for g in gens)
+    # The deterministic base library remains the frozen reference for pairing
+    # with the original no-checkpoint slice; SAC trajectories are a
+    # method-specific overlay for GATSAC-style only.
+    assert rec["reference_library_hash"] != rec["library_hash"]
+    assert (rec["input_hashes"]["reference_library"]
+            == rec["reference_library_hash"])
 
 
 # --------------------------------------------------------------------------- #

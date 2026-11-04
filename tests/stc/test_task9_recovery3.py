@@ -191,7 +191,7 @@ def test_main_isolates_method_failure(monkeypatch):
     rc = RunContext.create(tempfile.mkdtemp(), "stc_main", cfg, run_id="t")
 
     with pytest.raises(RuntimeError, match="boom"):
-        main._run_scenario(sc, field, library, reference, SacRes(),
+        main._run_scenario(sc, field, library, library, reference, SacRes(),
                            2, 42, 42, cfg, rc)
     records = json.loads((rc.run_dir / "raw_records.json").read_text())
     by_method = {r["method"]: r for r in records}

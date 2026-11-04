@@ -37,7 +37,7 @@ from segment.stc.system_baselines import (
     BaselineUnavailable, COMM_AWARE_GENS, GRAPH_GENS, METHOD_SPECS, SYSTEM_BASELINE_KEYS,
     run_system_baseline, validate_baseline_availability,
 )
-from segment.stc.types import PlanSolution, STCScenario
+from segment.stc.types import PlanSolution, SegmentLibrary, STCScenario
 
 SMOKE_GENERATOR_CONFIG = {
     "straight_hold": True,
@@ -296,19 +296,33 @@ def _build_context(uav_num, map_seed, task_seed, cfg):
     base = load_stc_scenario(uav_num, task_seed=task_seed, map_seed=map_seed)
     sc = _small_scenario(base, cfg["smoke_tasks"]) if cfg["smoke"] else base
     field = PerSectorRadioField.from_scenario(sc, spacing_m=cfg["spacing_m"])
+    # Build the deterministic base library first.  T_ref/D_ref and the shared
+    # reference-library hash stay frozen on this base even when a learned
+    # baseline contributes a method-specific trajectory overlay.
+    base_library = build_all_pairs_library(
+        sc, field, generator_config=cfg["generator_config"])
+    reference = default_objective_spec(sc, base_library.candidates)
+
     # Produce real checkpoint-bound SAC candidates; an incompatible/missing
     # checkpoint is an explicit unavailable, never a deterministic substitution.
     sac_result = produce_sac_segment_candidates(cfg["sac_checkpoint"], sc, field)
-    drl_candidates = (sac_result.candidates if sac_result.status == "available"
-                      else {})
-    library = build_all_pairs_library(sc, field,
-                                      generator_config=cfg["generator_config"],
-                                      drl_candidates=drl_candidates)
-    reference = default_objective_spec(sc, library.candidates)
-    return sc, field, library, reference, sac_result
+    if sac_result.status == "available":
+        candidates = {}
+        for edge, entries in base_library.candidates.items():
+            candidates[edge] = tuple(entries) + tuple(
+                sac_result.candidates.get(edge, ()))
+        library = SegmentLibrary(
+            candidates=candidates,
+            map_seed=base_library.map_seed,
+            task_seed=base_library.task_seed,
+            world_hash=base_library.world_hash,
+        )
+    else:
+        library = base_library
+    return sc, field, base_library, library, reference, sac_result
 
 
-def _run_scenario(sc, field, library, reference, sac_result,
+def _run_scenario(sc, field, reference_library, library, reference, sac_result,
                   uav_num, map_seed, task_seed, cfg, rc, checkpoint=None):
     prefix = "%d_%d_%d" % (uav_num, map_seed, task_seed)
     inputs = {}
@@ -316,6 +330,9 @@ def _run_scenario(sc, field, library, reference, sac_result,
         ("scenario", sc),
         ("task", {"positions_m": sc.task_positions_m, "data_bits": sc.task_data_bits}),
         ("map", {"world_hash": field.world_hash}),
+        ("reference_library", [[src, tgt, list(cs)]
+                               for (src, tgt), cs in sorted(
+                                   reference_library.candidates.items())]),
         ("library", [[src, tgt, list(cs)]
                      for (src, tgt), cs in sorted(library.candidates.items())]),
     ):
@@ -345,7 +362,9 @@ def _run_scenario(sc, field, library, reference, sac_result,
                       "map_seed": map_seed, "task_seed": task_seed,
                       "method_seed": method_seed, "method": method,
                       "reference": reference, "reference_hash": reference.reference.source_hash,
-                      "library_hash": inputs["library"], "input_hashes": inputs,
+                      "library_hash": inputs["library"],
+                      "reference_library_hash": inputs["reference_library"],
+                      "input_hashes": inputs,
                       "world_hash": field.world_hash}
             start = time.perf_counter()
             failure = None
@@ -359,6 +378,7 @@ def _run_scenario(sc, field, library, reference, sac_result,
                                             method_seed=method_seed,
                                             iterations=cfg["iterations"],
                                             solver_config=solver_config,
+                                            objective_spec=reference,
                                             **options)
                     payload = _result_payload(r, sc)
                     solution, trace = r.solution, r.result.timelines
@@ -569,9 +589,9 @@ def main(argv=None):
     try:
         for uav_num, map_seed, task_seed in itertools.product(
                 cfg["uav_nums"], cfg["map_seeds"], cfg["task_seeds"]):
-            sc, field, library, reference, sac_result = _build_context(
+            sc, field, reference_library, library, reference, sac_result = _build_context(
                 uav_num, map_seed, task_seed, cfg)
-            _run_scenario(sc, field, library, reference,
+            _run_scenario(sc, field, reference_library, library, reference,
                                             sac_result, uav_num, map_seed,
                                             task_seed, cfg, rc,
                                             checkpoint=_checkpoint_method)
@@ -584,7 +604,7 @@ def main(argv=None):
                 rq2.update(partial)
                 rc.write_bytes("rq2.json", _json_bytes(rq2_records))
 
-            rq2.update(run_rq2(sc, field, library.candidates, reference,
+            rq2.update(run_rq2(sc, field, reference_library.candidates, reference,
                                seed=map_seed, checkpoint=_checkpoint_rq2))
             _persist_partial()   # incremental checkpoint after each scenario
         _assert_coverage(records, cfg)

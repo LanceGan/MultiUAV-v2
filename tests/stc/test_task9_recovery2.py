@@ -207,10 +207,11 @@ def test_main_preserves_partial_records_on_failure(monkeypatch, tmp_path):
         candidates = {}
 
     def fake_build(u, m, t, cfg):
-        return sc, Field(), Lib(), None, SacRes()
+        library = Lib()
+        return sc, Field(), library, library, None, SacRes()
 
-    def fake_run(scn, field, library, reference, sac_result, u, m, t, cfg, rc,
-                 checkpoint=None):
+    def fake_run(scn, field, reference_library, library, reference, sac_result,
+                 u, m, t, cfg, rc, checkpoint=None):
         if m == 8:
             raise RuntimeError("boom on scenario 2")
         rec = {"record_id": "x", "uav_num": u, "map_seed": m, "task_seed": t,

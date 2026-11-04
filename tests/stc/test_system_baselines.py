@@ -23,7 +23,13 @@ from segment.stc.system_baselines import (
     SystemBaselineResult,
     run_system_baseline,
 )
-from segment.stc.types import RadioSample, STCScenario, ScenarioLimits
+from segment.stc.types import (
+    ObjectiveSpec,
+    RadioSample,
+    ReferenceValues,
+    STCScenario,
+    ScenarioLimits,
+)
 
 
 def _limits():
@@ -149,6 +155,18 @@ def test_all_methods_share_identical_reference(setup):
         assert ref.t_ref_s == ref0.t_ref_s
         assert ref.d_ref_s == ref0.d_ref_s
         assert ref.source_hash == ref0.source_hash
+
+
+def test_supplied_objective_reference_is_used_verbatim(setup):
+    sc, lib, field = setup
+    spec = ObjectiveSpec(
+        reference=ReferenceValues(123.0, 456.0, "frozen-base-library"),
+        w_t=0.5,
+        w_d=0.5,
+    )
+    result = run_system_baseline(
+        "library_open_loop", sc, lib, field, objective_spec=spec)
+    assert result.objective_spec is spec
 
 
 def test_baselines_are_single_shot_full_evaluations(setup):
