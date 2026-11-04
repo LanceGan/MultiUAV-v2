@@ -382,6 +382,9 @@ def _run_scenario(sc, field, reference_library, library, reference, sac_result,
                                             **options)
                     payload = _result_payload(r, sc)
                     solution, trace = r.solution, r.result.timelines
+                except BaselineUnavailable as exc:
+                    payload = _unavailable_payload(method, str(exc), cfg)
+                    solution, trace = None, None
                 except (Exception, KeyboardInterrupt) as exc:
                     payload = _failed_payload(method, exc, cfg)
                     failure = exc

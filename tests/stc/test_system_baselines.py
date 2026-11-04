@@ -21,6 +21,7 @@ from segment.stc.generators import generate_comm_waypoints, generate_straight_ho
 from segment.stc.system_baselines import (
     SYSTEM_BASELINE_KEYS,
     SystemBaselineResult,
+    _route_edges,
     run_system_baseline,
 )
 from segment.stc.types import (
@@ -269,6 +270,53 @@ def test_gatsac_without_sac_is_explicitly_unavailable(setup):
                      for edge, cs in lib.items()}
     with pytest.raises(RuntimeError, match="unavailable"):
         _run("gatsac_style", sc, deterministic, field)
+
+
+def test_gatsac_checks_only_edges_used_by_selected_routes(setup):
+    from segment.stc.evaluator import default_objective_spec
+
+    sc, lib, field = setup
+    sc = replace(sc, n_uav=1)
+    base_spec = default_objective_spec(sc, lib)
+    # A sparse SAC family is allowed: depot->0 is absent, but the planner can
+    # start at task 1, visit task 0, and finish through available SAC edges.
+    sparse = {
+        edge: [c for c in cands if c.generator.startswith("drl:SAC:")]
+        for edge, cands in lib.items()
+    }
+    sparse[(-1, 0)] = []
+    result = run_system_baseline(
+        "gatsac_style", sc, sparse, field,
+        checkpoint_path=field.checkpoint_path,
+        objective_spec=base_spec)
+    used = {
+        edge
+        for route in result.solution.routes
+        for edge in _route_edges(route, sc.n_tasks)
+    }
+    assert (-1, 0) not in used
+    assert result.provenance["route_feasibility_check"] == "selected-routes-only"
+
+
+def test_gatsac_unavailable_when_no_sac_route_covers_tasks(setup):
+    from segment.stc.evaluator import default_objective_spec
+
+    sc, lib, field = setup
+    sc = replace(sc, n_uav=1)
+    base_spec = default_objective_spec(sc, lib)
+    sparse = {
+        edge: (
+            []
+            if edge[0] == -1
+            else [c for c in cands if c.generator.startswith("drl:SAC:")]
+        )
+        for edge, cands in lib.items()
+    }
+    with pytest.raises(RuntimeError, match="no SAC-compatible route"):
+        run_system_baseline(
+            "gatsac_style", sc, sparse, field,
+            checkpoint_path=field.checkpoint_path,
+            objective_spec=base_spec)
 
 
 def test_gatsac_requires_matching_checkpoint(setup, tmp_path):

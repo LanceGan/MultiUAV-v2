@@ -36,7 +36,6 @@ from segment.stc.operators import build_ebtas_initial_solution
 from segment.stc.sequencing import (
     distance_nn_2opt,
     jia_time_energy_tsp,
-    library_aware_sequence,
 )
 from segment.stc.slsqp_refine import candidate_cost
 from segment.stc.solver import STCALNS
@@ -184,15 +183,82 @@ def _jia_ebtas_style(scenario, library, field, seed):
 
 
 def _gatsac_style(scenario, library, field, seed):
-    seg = _seg_view(library, scenario, field)
     assign = spatial_kmeans(scenario, seed=seed)
+    dt = scenario.limits.delta_t_s
+    routes = []
+    candidate_ids = []
+    for cluster in assign.clusters:
+        route, ids = _gatsac_route(scenario, library, cluster, dt)
+        routes.append(route)
+        candidate_ids.append(ids)
+    return PlanSolution(routes=tuple(routes),
+                        candidate_ids=tuple(candidate_ids))
 
-    def sequencer(sc, ids, sd):
-        return library_aware_sequence(sc, seg, ids, seed=sd)
 
-    return _plan_from_clusters(scenario, library, assign.clusters,
-                               sequencer,
-                               {c.generator for cs in library.values() for c in cs}, seed)
+def _gatsac_route(scenario, library, task_ids, dt):
+    """Minimum-proxy route whose every traversed edge has an SAC candidate.
+
+    Missing SAC edges are forbidden during routing. Completeness is checked on
+    the selected routes, not on all ``K(K+1)`` edges: a failed learned rollout
+    on an unused edge must not invalidate the whole method.
+    """
+    tasks = tuple(task_ids)
+    if not tasks:
+        return (), ()
+
+    def best_edge(src, tgt):
+        pool = [c for c in library.get((src, tgt), ()) if c.rankable]
+        if not pool:
+            return None
+        cand = min(pool, key=lambda c: candidate_cost(c, dt))
+        return float(candidate_cost(cand, dt)), cand.candidate_id
+
+    n = len(tasks)
+    # (visited_mask, last_index) -> (proxy_cost, route, candidate_ids)
+    states = {}
+    for i, task in enumerate(tasks):
+        edge = best_edge(-1, task)
+        if edge is not None:
+            cost, cid = edge
+            states[(1 << i, i)] = (cost, (task,), (cid,))
+
+    for mask in range(1, 1 << n):
+        for last in range(n):
+            state = states.get((mask, last))
+            if state is None:
+                continue
+            cost, route, cids = state
+            for nxt, task in enumerate(tasks):
+                if mask & (1 << nxt):
+                    continue
+                edge = best_edge(tasks[last], task)
+                if edge is None:
+                    continue
+                edge_cost, cid = edge
+                key = (mask | (1 << nxt), nxt)
+                proposal = (cost + edge_cost, route + (task,), cids + (cid,))
+                incumbent = states.get(key)
+                if incumbent is None or proposal < incumbent:
+                    states[key] = proposal
+
+    full = (1 << n) - 1
+    best = None
+    for last, task in enumerate(tasks):
+        state = states.get((full, last))
+        if state is None:
+            continue
+        edge = best_edge(task, scenario.n_tasks)
+        if edge is None:
+            continue
+        edge_cost, cid = edge
+        proposal = (state[0] + edge_cost, state[1], state[2] + (cid,))
+        if best is None or proposal < best:
+            best = proposal
+    if best is None:
+        raise BaselineUnavailable(
+            "gatsac_style",
+            "no SAC-compatible route covers assigned tasks %r" % (list(tasks),))
+    return best[1], best[2]
 
 
 _BUILDERS = {
@@ -210,7 +276,7 @@ _COMPONENTS = {
     "jia_ebtas_style": dict(assignment="jia_ebtas",
                             sequence="jia_time_energy_tsp"),
     "gatsac_style": dict(assignment="spatial_kmeans",
-                         sequence="library_aware_sequence"),
+                         sequence="communication_aware_tsp"),
     "library_open_loop": dict(assignment="library_aware_ebtas",
                               sequence="library_aware_sequence"),
 }
@@ -220,7 +286,8 @@ _STYLE_NOTES = {
                         "time-energy internal criterion; evaluated on the "
                         "common T/D/O metrics."),
     "gatsac_style": ("GATSAC-style reproduction using checkpoint-bound SAC "
-                     "trajectories; style reproduction, not author-code reproduction."),
+                     "trajectories with selected-route-only feasibility checks; "
+                     "style reproduction, not author-code reproduction."),
 }
 
 
@@ -237,6 +304,7 @@ def _provenance(spec, seed, solution, library, n_tasks):
     p["trajectory_layer"] = "+".join(p["trajectory_generators"]) or "idle"
     if spec.key == "gatsac_style":
         p["trajectory_note"] = _STYLE_NOTES["gatsac_style"]
+        p["route_feasibility_check"] = "selected-routes-only"
     if spec.key == "jia_ebtas_style":
         p["style_note"] = _STYLE_NOTES["jia_ebtas_style"]
     return p
@@ -288,7 +356,9 @@ def validate_baseline_availability(method, scenario, library, *,
     edges = ([(-1, t) for t in range(k)]
              + [(s, t) for s in range(k) for t in range(k + 1) if s != t])
     missing = [edge for edge in edges if not view.get(edge)]
-    if missing:
+    if method == "gatsac_style" and not any(view.values()):
+        raise BaselineUnavailable(method, "no compatible SAC candidates")
+    if method != "gatsac_style" and missing:
         raise BaselineUnavailable(method, "required trajectory family missing on edge %r" % (missing[0],))
     return view, checkpoint
 
