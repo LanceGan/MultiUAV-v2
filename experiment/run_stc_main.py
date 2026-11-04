@@ -66,6 +66,7 @@ def _common_args(parser):
     parser.add_argument("--smoke", action="store_true", default=None)
     parser.add_argument("--iterations", type=int, default=None)
     parser.add_argument("--spacing-m", type=float, default=None)
+    parser.add_argument("--sac-checkpoint", default=None)
 
 
 def _reject_constant(token):
@@ -161,6 +162,10 @@ def _resolve_config(args):
                 if key != "methods":
                     value = [int(x) for x in value]
             cfg[key] = value
+    if args.sac_checkpoint is not None:
+        # CLI paths are relative to the invocation directory; config-file paths
+        # retain their existing config-relative semantics below.
+        cfg["sac_checkpoint"] = str(Path(args.sac_checkpoint).expanduser().resolve())
     if not isinstance(cfg["smoke"], bool):
         raise ValueError("smoke must be boolean")
     if cfg["smoke"]:
