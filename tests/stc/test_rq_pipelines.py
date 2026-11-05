@@ -366,6 +366,20 @@ def test_ablation_produces_records_for_each_mechanism():
         assert r["status"] in ("evaluated", "unavailable")
 
 
+def test_ablation_ignores_runner_iterations_solver_alias():
+    from experiment import run_stc_ablation as ab
+    from segment.stc.library import build_all_pairs_library
+    sc = _scenario(2, 3)
+    field = _field_for(sc)
+    library = build_all_pairs_library(
+        sc, field, generator_config={"straight_hold": True})
+    out = ab.run_ablation(
+        sc, field, library.candidates, seed=0, iterations=1,
+        solver_config={"iterations": 1000, "rho": 0.1})
+    assert len(out["records"]) == 8
+    assert all(r["status"] == "evaluated" for r in out["records"])
+
+
 def test_scale_produces_records_for_each_family():
     from experiment import run_stc_scale as sc_mod
     base = _scenario(2, 3)

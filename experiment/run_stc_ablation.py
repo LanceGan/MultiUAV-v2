@@ -68,6 +68,10 @@ DEFAULT_CONFIG = {
                "audit_interval": 50},
 }
 EXPECTED_ARTIFACTS = ("resolved_config.json", "records.json", "summary.json")
+STCALNS_CONFIG_KEYS = frozenset({
+    "rho", "T0", "cooling", "segment", "score_new_best", "score_improve",
+    "score_accept", "score_reject", "audit_interval",
+})
 
 
 def _reduced_library(scenario, library):
@@ -84,7 +88,10 @@ def run_ablation(scenario, field, library, seed=42, iterations=1000,
                  solver_config=None, checkpoint=None):
     """Run the full method and each single-mechanism ablation, return records."""
     lib = library.candidates if hasattr(library, "candidates") else dict(library)
-    base_config = dict(solver_config or {})
+    base_config = {
+        key: value for key, value in dict(solver_config or {}).items()
+        if key in STCALNS_CONFIG_KEYS
+    }
     spec = default_objective_spec(scenario, lib)
     provenance = input_provenance(scenario, lib, field, spec)
 
