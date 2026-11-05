@@ -33,7 +33,7 @@ from experiment.stc_common import (
     seg_view,
     small_scenario,
 )
-from segment.stc.library import build_all_pairs_library
+from segment.stc.cache import load_or_build_base_library
 from segment.stc.evaluator import default_objective_spec, library_content_hash
 from segment.stc.operators import build_ebtas_initial_solution, build_initial_solution
 from segment.stc.radio import PerSectorRadioField
@@ -62,6 +62,8 @@ DEFAULT_CONFIG = {
     "method_seeds": [0, 1, 2, 3, 4],
     "smoke": False, "smoke_tasks": 6, "spacing_m": 1000.0,
     "iterations": 1000,
+    "workers": 1,
+    "library_cache_dir": "results/cache/stc",
     "generator_config": {"straight_hold": True,
                          "comm_waypoints": {"grid_shape": (5, 5)}},
     "solver": {"rho": 0.1, "T0": 0.1, "cooling": 0.995, "segment": 100,
@@ -171,11 +173,22 @@ def run_ablation(scenario, field, library, seed=42, iterations=1000,
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_args(parser)
+    parser.add_argument("--workers", type=int, default=None)
+    parser.add_argument("--library-cache-dir", default=None)
+    parser.add_argument("--no-library-cache", action="store_true")
     args = parser.parse_args(argv)
     try:
         cfg = resolve_runner_config(args, DEFAULT_CONFIG)
     except (OSError, ValueError, TypeError) as exc:
         parser.error(str(exc))
+    if args.workers is not None:
+        if args.workers < 1:
+            parser.error("--workers must be >= 1")
+        cfg["workers"] = args.workers
+    if args.library_cache_dir is not None:
+        cfg["library_cache_dir"] = args.library_cache_dir
+    if args.no_library_cache:
+        cfg["library_cache_dir"] = None
 
     if args.dry_run:
         print("RQ5 ablation: mechanisms=%s" % (["full"] + list(ABLATIONS)))
@@ -185,8 +198,9 @@ def main(argv=None):
         base = load_stc_scenario(uav_num, task_seed=task_seed, map_seed=map_seed)
         sc = small_scenario(base, cfg["smoke_tasks"]) if cfg["smoke"] else base
         field = PerSectorRadioField.from_scenario(sc, spacing_m=cfg["spacing_m"])
-        library = build_all_pairs_library(sc, field,
-                                          generator_config=cfg["generator_config"])
+        library, _cache_hit = load_or_build_base_library(
+            sc, field, cfg["generator_config"], spacing_m=cfg["spacing_m"],
+            workers=cfg["workers"], cache_root=cfg["library_cache_dir"])
         def emit(record):
             checkpoint({**record, "uav_num": uav_num, "map_seed": map_seed,
                         "task_seed": task_seed})
