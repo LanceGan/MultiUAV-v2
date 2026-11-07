@@ -351,7 +351,7 @@ def make_figure(runs, out_dir):
         "figure": stem.name + ".png",
         "figure_files": [
             stem.name + suffix for suffix in
-            (".png", ".pdf", ".svg", ".tiff")],
+            (".png", ".pdf", ".svg")],
         "runs": [
             {
                 "run_id": run["run_id"],
