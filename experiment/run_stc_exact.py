@@ -90,7 +90,8 @@ def _evaluated_metrics(scenario, library, solution, field, spec):
 
 
 def run_exact_scenario(base_scenario, task_count, *, spacing_m,
-                       time_limit_s, max_leaves, iterations):
+                       time_limit_s, max_leaves, iterations,
+                       checkpoint=None):
     """Evaluate exact enumeration and Proposed on the same K-task subproblem."""
     if task_count < 1 or task_count > base_scenario.n_tasks:
         raise ValueError(
@@ -149,6 +150,8 @@ def run_exact_scenario(base_scenario, task_count, *, spacing_m,
         "max_leaves": int(max_leaves),
         "solution": _solution_payload(exact.incumbent),
     }
+    if checkpoint is not None:
+        checkpoint(exact_record)
 
     initial = build_ebtas_initial_solution(
         scenario, seg_view(library, scenario, field), seed=0)
@@ -171,6 +174,8 @@ def run_exact_scenario(base_scenario, task_count, *, spacing_m,
         "evaluator_calls": proposed.evaluator_calls,
         "solution": _solution_payload(proposed.best_solution),
     }
+    if checkpoint is not None:
+        checkpoint(proposed_record)
     return exact_record, proposed_record
 
 
@@ -213,21 +218,22 @@ def main(argv=None):
         task_counts = (
             [min(base.n_tasks, cfg["smoke_tasks"])]
             if cfg["smoke"] else cfg["exact_tasks"])
+
+        def emit(record):
+            checkpoint({**record, "base_uav_num": uav_num,
+                        "base_map_seed": map_seed,
+                        "base_task_seed": task_seed})
+
         for task_count in task_counts:
-            exact, proposed = run_exact_scenario(
+            run_exact_scenario(
                 base,
                 task_count,
                 spacing_m=cfg["spacing_m"],
                 time_limit_s=cfg["time_limit_s"],
                 max_leaves=cfg["max_leaves"],
                 iterations=cfg["iterations"],
+                checkpoint=emit,
             )
-            checkpoint({**exact, "base_uav_num": uav_num,
-                        "base_map_seed": map_seed,
-                        "base_task_seed": task_seed})
-            checkpoint({**proposed, "base_uav_num": uav_num,
-                        "base_map_seed": map_seed,
-                        "base_task_seed": task_seed})
 
     def summary_fn(records):
         exact = [r for r in records

@@ -95,14 +95,17 @@ def test_smoke_main_checkpoints_exact_and_proposed(monkeypatch):
         run_stc_exact, "load_stc_scenario",
         lambda *args, **kwargs: _scenario(6))
 
-    def fake_exact(base, task_count, **kwargs):
+    def fake_exact(base, task_count, checkpoint=None, **kwargs):
         captured["task_count"] = task_count
-        return (
-            {"method": "exact_discrete_enumeration", "n_tasks": task_count,
-             "proven_optimal": True, "discrete_search_complete": True,
-             "timed_out": False},
-            {"method": "proposed_stc_alns", "n_tasks": task_count},
-        )
+        exact = {
+            "method": "exact_discrete_enumeration", "n_tasks": task_count,
+            "proven_optimal": True, "discrete_search_complete": True,
+            "timed_out": False,
+        }
+        proposed = {"method": "proposed_stc_alns", "n_tasks": task_count}
+        checkpoint(exact)
+        checkpoint(proposed)
+        return exact, proposed
 
     monkeypatch.setattr(run_stc_exact, "run_exact_scenario", fake_exact)
 
