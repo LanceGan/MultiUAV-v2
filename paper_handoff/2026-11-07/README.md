@@ -1,7 +1,8 @@
-# U=3 最终路线图交接包（2026-11-07）
+# Mac 补充分享包（2026-11-07）
 
-本包供 Windows 论文写作线使用，对应 U=3、s42、method seed 0 的六方法
-最终路线对比。实验数据本身位于 2026-11-06 的 U=3 sealed run 交接包。
+本目录供 Windows 论文写作线使用，包含已经封存的 U=3 最终路线图和
+RQ5 五-seed 机制消融。U=3 实验数据本身位于 2026-11-06 的 sealed run
+交接包。
 
 ## 解压
 
@@ -9,6 +10,7 @@
 
 ```bash
 tar -xzf paper_handoff/2026-11-07/u3_routes_20261107.tar.gz -C .
+tar -xzf paper_handoff/2026-11-07/rq5_ablation_20261107.tar.gz -C .
 ```
 
 ## 图件
@@ -40,3 +42,32 @@ tar -xzf paper_handoff/2026-11-07/u3_routes_20261107.tar.gz -C .
 ```bash
 shasum -a 256 -c paper_handoff/2026-11-07/SHA256SUMS
 ```
+
+## RQ5 机制消融
+
+`rq5_ablation_20261107.tar.gz` 包含：
+
+- `formal-ablation-s42-m0-r3` 至 `m4-r3` 五个 sealed run
+- 每个 run 的 full + 7 个消融臂
+- `stc_rq5_ablation_s42.png/pdf/svg`
+- `stc_rq5_ablation_s42.statistics.json/csv`
+- provenance、alignment、PDF collision audit 和 reporting bundle
+
+五-seed 配对结果口径为 `ΔJ = ablation - full`，正值表示去掉该机制后变差：
+
+- conflict-aware repair：`ΔJ=+0.013216`，5/5 seeds 变差；
+- path switch：`ΔJ=+0.004327`，3/5 seeds 变差；
+- adaptive weights：`ΔJ=+0.002647`，3/5 seeds 变差；
+- EBTAS initialisation：`ΔJ=-0.000047`，2 worse / 3 better，基本中性；
+- multi-candidate：`ΔJ=-0.004987`，1 worse / 4 better；
+- hotspot destroy：`ΔJ=-0.000854`，2 worse / 3 better；
+- incremental eval：目标值 5/5 完全相同，应只作为计算效率消融。
+
+统计使用单侧 exact paired sign-flip test。conflict-aware repair 的 raw
+`p=0.03125`，但 7 个消融臂 Holm 校正后 `p=0.21875`。因此正文应报告
+方向、效应量和配对一致性，不能把 5 seeds 的结果描述成经过多重校正的
+显著优势。
+
+论文不能声称全部七项机制都改善目标值。可以重点报告
+conflict-aware repair，并将 path switch、adaptive weights 作为方向性但
+不稳健的补充证据。
