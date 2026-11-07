@@ -15,14 +15,14 @@
 |---|---|---:|---:|---|
 | U=2 主实验 | s42/s43/s44 | 0–4 | 6 | 已完成 |
 | U=2 GATSAC s42 | s42 | 0–4 | 1 | 已完成 |
-| U=2 GATSAC s43 | s43 | 0–4 | 1 | 运行中 |
-| U=2 GATSAC s44 | s44 | 0–4 | 1 | 待运行 |
-| U=3 规模探针 | s42 | 0 | 6 | 运行中 |
+| U=2 GATSAC s43 | s43 | 0–4 | 1 | 已完成 |
+| U=2 GATSAC s44 | s44 | 0–4 | 1 | 已完成 |
+| U=3 规模探针 | s42 | 0 | 6 | 已完成 |
 | U=4 规模探针 | s42 | 0 | 6 | 运行中 |
-| RQ1 | 一个代表场景 | N/A | 多生成器 | 待运行 |
-| RQ3 | 一个代表场景 | N/A | 3 评价模式 | 待运行 |
-| RQ5 消融 | s42 | 0–4 | full + 7 ablations | 待运行 |
-| exact | K=4/6/8 | N/A | 精确枚举 vs Proposed | 待运行 |
+| RQ1 | 一个代表场景 | N/A | 多生成器 | 已完成 |
+| RQ3 | 一个代表场景 | N/A | 3 评价模式 | 已完成 |
+| RQ5 消融 | s42 | 0–4 | full + 7 ablations | 已完成 |
+| exact | K=4/6/8 | N/A | 精确枚举 vs Proposed | K=4 运行中 |
 
 ## 正式 run ID
 
@@ -36,7 +36,7 @@ GATSAC 补充：
 
 - `gatsac-u2-s42-r2`
 - `gatsac-u2-s43`
-- `gatsac-u2-s44`（待启动）
+- `gatsac-u2-s44`
 
 规模探针：
 
@@ -65,11 +65,22 @@ formal-u2-s43
 formal-u2-s44-r2
 ```
 
+其他当前正式图：
+
+- `results/figs_u3_routes_s42/`：U=3 六方法最终路线图；
+- `results/figs_ablation_s42_20261107/`：RQ5 五-seed 配对消融图、
+  statistics JSON/CSV、provenance 和 reporting bundle。
+
 ## 论文可声称内容
 
 - U=2 three-scene paired study，每场景 5 个 method seeds；
 - 15 个场景×seed 配对点全部改善；
 - U=3/U=4 single-seed scalability probes；
+- RQ5 中 conflict-aware repair 在 5/5 seeds 上去除后变差；path switch 和
+  adaptive weights 只有方向性证据，Holm 校正后不能声称显著；
+- multi-candidate、hotspot destroy、EBTAS initialisation 在当前 s42
+  五-seed 消融中不能声称改善目标值；
+- incremental eval 只能作为计算效率消融，不能作为目标值贡献；
 - 不得声称五场景矩阵、跨地图规模泛化、多 train-seed DRL 或完整 Monte Carlo。
 
 ## 明确取消
