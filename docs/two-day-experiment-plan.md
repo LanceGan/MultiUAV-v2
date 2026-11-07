@@ -22,7 +22,7 @@
 | RQ1 | 一个代表场景 | N/A | 多生成器 | 已完成 |
 | RQ3 | 一个代表场景 | N/A | 3 评价模式 | 已完成 |
 | RQ5 消融 | s42 | 0–4 | full + 7 ablations | 已完成 |
-| exact | K=4/6/8 | N/A | 精确枚举 vs Proposed | K=4 运行中 |
+| exact | K=4/6/8 | N/A | 精确枚举 vs Proposed | K=4 已封存；K=6/8 运行中 |
 
 ## 正式 run ID
 
@@ -70,6 +70,8 @@ formal-u2-s44-r2
 - `results/figs_u3_routes_s42/`：U=3 六方法最终路线图；
 - `results/figs_ablation_s42_20261107/`：RQ5 五-seed 配对消融图、
   statistics JSON/CSV、provenance 和 reporting bundle。
+- Exact K=4 已完整枚举，exact 与 Proposed 在该任务前缀上均不可行；
+  K=6/8 完成后另出 exact 汇总表和交接包。
 
 ## 论文可声称内容
 
