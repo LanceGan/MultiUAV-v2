@@ -1,8 +1,8 @@
 """Plot sealed STC final routes on a common scenario.
 
 The figure uses only persisted ``solutions.json``/``timelines.json`` records.
-For U=2 s42, GATSAC is read from its sealed supplement run while the other five
-systems come from the sealed main run.
+An optional GATSAC supplement run can be supplied when that method was sealed
+separately from the other five systems.
 """
 
 import argparse
@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import textwrap
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -40,7 +41,7 @@ METHODS = (
     ("proposed_stc_alns", "Proposed STC-ALNS", "main"),
 )
 
-UAV_COLORS = ("#1f77b4", "#e69f00")
+UAV_COLORS = ("#1f77b4", "#e69f00", "#009e73", "#cc79a7")
 
 
 def _load_json(path):
@@ -67,9 +68,9 @@ def _violation_text(record):
     parts = []
     for key, label in (
         ("unserved_tasks", "unserved"),
-        ("upload_failures", "upload fail"),
+        ("upload_failures", "upload"),
         ("deadline_exceeded", "deadline"),
-        ("wait_exceeded", "wait slots"),
+        ("wait_exceeded", "wait"),
     ):
         value = violations.get(key, 0)
         if value:
@@ -80,19 +81,34 @@ def _violation_text(record):
     return "Infeasible  |  " + (", ".join(parts) or "hard constraint")
 
 
-def _source_paths(main_run, gatsac_run):
-    return {
+def _source_paths(main_run, gatsac_run=None):
+    sources = {
         "main": {
             "raw": main_run / "raw_records.json",
             "solutions": main_run / "solutions.json",
             "timelines": main_run / "timelines.json",
         },
-        "gatsac": {
+    }
+    if gatsac_run is not None:
+        sources["gatsac"] = {
             "raw": gatsac_run / "raw_records.json",
             "solutions": gatsac_run / "solutions.json",
             "timelines": gatsac_run / "timelines.json",
-        },
-    }
+        }
+    return sources
+
+
+def _resolve_source(source_key, sources):
+    if source_key in sources:
+        return source_key
+    if source_key == "gatsac" and "main" in sources:
+        return "main"
+    raise KeyError("source %r is unavailable" % source_key)
+
+
+def _figure_stem(uav_num, map_seed, method_seed):
+    return "stc_u%d_s%d_seed%d_routes" % (
+        uav_num, map_seed, method_seed)
 
 
 def _route_paths(timeline_record):
@@ -128,9 +144,10 @@ def _sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def make_figure(main_run, gatsac_run, out_dir, method_seed=0):
+def make_figure(main_run, gatsac_run, out_dir, method_seed=0,
+                uav_num=2, map_seed=42, task_seed=42):
     main_run = Path(main_run).resolve()
-    gatsac_run = Path(gatsac_run).resolve()
+    gatsac_run = Path(gatsac_run).resolve() if gatsac_run is not None else None
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     sources = _source_paths(main_run, gatsac_run)
@@ -143,8 +160,9 @@ def make_figure(main_run, gatsac_run, out_dir, method_seed=0):
         key: _record_map(items, method_seed) for key, items in raw.items()
     }
 
-    scenario = load_stc_scenario(2, task_seed=42, map_seed=42)
-    legacy = get_scenario(2)
+    scenario = load_stc_scenario(
+        uav_num, task_seed=task_seed, map_seed=map_seed)
+    legacy = get_scenario(uav_num)
     tasks = scenario.task_positions_m
     base_positions = tuple(
         (float(x) * 100.0, float(y) * 100.0) for x, y in legacy["bs_loc"])
@@ -161,21 +179,22 @@ def make_figure(main_run, gatsac_run, out_dir, method_seed=0):
         "pdf.fonttype": 42,
     })
     fig, axes = plt.subplots(2, 3, figsize=(7.2, 5.2), constrained_layout=False)
-    fig.subplots_adjust(left=0.035, right=0.995, top=0.88, bottom=0.17,
+    fig.subplots_adjust(left=0.035, right=0.995, top=0.84, bottom=0.17,
                         wspace=0.055, hspace=0.22)
     axes = axes.ravel()
 
     for panel_idx, (method, label, source_key) in enumerate(METHODS):
         ax = axes[panel_idx]
         index = chr(ord("a") + panel_idx)
-        record = record_by_source[source_key].get(method)
+        resolved_source = _resolve_source(source_key, sources)
+        record = record_by_source[resolved_source].get(method)
         if record is None:
             ax.axis("off")
             ax.text(0.5, 0.5, "%s unavailable" % label,
                     ha="center", va="center", transform=ax.transAxes)
             continue
         rec_id = record["record_id"]
-        timeline_record = timelines[source_key].get(rec_id)
+        timeline_record = timelines[resolved_source].get(rec_id)
         paths = _route_paths(timeline_record)
 
         ax.scatter(
@@ -204,10 +223,11 @@ def make_figure(main_run, gatsac_run, out_dir, method_seed=0):
                 marker="X", s=22, c="#d62728", edgecolors="white",
                 linewidths=0.3, zorder=5)
 
-        status_text = _violation_text(record)
+        status_text = "\n".join(textwrap.wrap(
+            _violation_text(record), width=34, break_long_words=False))
         title_color = "#1b6b3a" if record["feasible"] else "#b22222"
         ax.set_title("%s  %s\n%s" % (index, label, status_text),
-                     loc="left", fontsize=7.1, color=title_color,
+                     loc="left", fontsize=6.8, color=title_color,
                      fontweight="bold", pad=3.5)
         ax.set_xlim(-100, max(scenario.length_m, 1) + 100)
         ax.set_ylim(-100, max(scenario.width_m, 1) + 100)
@@ -216,8 +236,10 @@ def make_figure(main_run, gatsac_run, out_dir, method_seed=0):
         ax.set_yticks([])
 
     legend_handles = [
-        Line2D([0], [0], color=UAV_COLORS[0], lw=1.4, label="UAV 1 route"),
-        Line2D([0], [0], color=UAV_COLORS[1], lw=1.4, label="UAV 2 route"),
+        Line2D([0], [0], color=UAV_COLORS[uav % len(UAV_COLORS)],
+               lw=1.4, label="UAV %d route" % (uav + 1))
+        for uav in range(uav_num)
+    ] + [
         Line2D([0], [0], marker="o", color="none", markerfacecolor="#c9cdd2",
                markeredgecolor="#5a6169", markersize=4.5, label="Inspection point"),
         Line2D([0], [0], marker="^", color="none", markerfacecolor="#7b6ba8",
@@ -232,10 +254,12 @@ def make_figure(main_run, gatsac_run, out_dir, method_seed=0):
     fig.legend(handles=legend_handles, loc="lower center", ncol=4,
                bbox_to_anchor=(0.5, 0.018), fontsize=6.4)
     fig.suptitle(
-        "U=2 inspection plan on s42 (method seed 0): final routes and hard feasibility",
-        fontsize=8.5, fontweight="bold")
+        "U=%d inspection plan on s%d (method seed %d): "
+        "final routes and hard feasibility" % (
+            uav_num, map_seed, method_seed),
+        fontsize=8.5, fontweight="bold", y=0.985)
 
-    stem = out_dir / "stc_u2_s42_seed0_routes"
+    stem = out_dir / _figure_stem(uav_num, map_seed, method_seed)
     if require_matplotlib_panel_alignment is not None:
         require_matplotlib_panel_alignment(
             fig, json_out=str(stem) + ".alignment-layout.json",
@@ -249,7 +273,8 @@ def make_figure(main_run, gatsac_run, out_dir, method_seed=0):
 
     provenance = {
         "figure": stem.name + ".png",
-        "scenario": {"uav_num": 2, "map_seed": 42, "task_seed": 42,
+        "scenario": {"uav_num": uav_num, "map_seed": map_seed,
+                     "task_seed": task_seed,
                      "method_seed": method_seed},
         "sources": {
             key: {name: {"path": str(path), "sha256": _sha256(path)}
@@ -257,11 +282,12 @@ def make_figure(main_run, gatsac_run, out_dir, method_seed=0):
             for key, paths in sources.items()
         },
         "methods": [
-            {"method": method, "label": label, "source": source}
+            {"method": method, "label": label,
+             "source": _resolve_source(source, sources)}
             for method, label, source in METHODS
         ],
     }
-    (out_dir / "stc_u2_s42_seed0_routes.provenance.json").write_text(
+    (out_dir / (stem.name + ".provenance.json")).write_text(
         json.dumps(provenance, indent=2), encoding="utf-8")
     plt.close(fig)
     return stem
@@ -270,12 +296,16 @@ def make_figure(main_run, gatsac_run, out_dir, method_seed=0):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--main-run", required=True)
-    parser.add_argument("--gatsac-run", required=True)
+    parser.add_argument("--gatsac-run")
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--method-seed", type=int, default=0)
+    parser.add_argument("--uav-num", type=int, choices=(2, 3, 4), default=2)
+    parser.add_argument("--map-seed", type=int, default=42)
+    parser.add_argument("--task-seed", type=int, default=42)
     args = parser.parse_args()
     stem = make_figure(args.main_run, args.gatsac_run, args.out_dir,
-                       method_seed=args.method_seed)
+                       method_seed=args.method_seed, uav_num=args.uav_num,
+                       map_seed=args.map_seed, task_seed=args.task_seed)
     print("wrote %s.{png,pdf,svg}" % stem)
     return 0
 
