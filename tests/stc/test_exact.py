@@ -125,3 +125,23 @@ def test_default_max_tasks_guards_large_instance():
     field, lib = _library(sc)
     with pytest.raises(ValueError):
         solve_exact_tiny(sc, lib, field)
+
+
+def test_parallel_workers_match_sequential_enumeration():
+    sc = _scenario(3)
+    field, lib = _library(sc)
+
+    sequential = solve_exact_tiny(sc, lib, field, workers=1)
+    parallel = solve_exact_tiny(sc, lib, field, workers=2)
+
+    assert parallel.explored == sequential.explored
+    assert parallel.proven_optimal == sequential.proven_optimal
+    np.testing.assert_approx_equal(parallel.objective, sequential.objective)
+    assert parallel.incumbent == sequential.incumbent
+
+
+def test_worker_count_must_be_positive():
+    sc = _scenario(3)
+    field, lib = _library(sc)
+    with pytest.raises(ValueError, match="workers"):
+        solve_exact_tiny(sc, lib, field, workers=0)

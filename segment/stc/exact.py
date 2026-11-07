@@ -16,7 +16,9 @@ optimum), not a placeholder.
 
 import itertools
 import math
+import multiprocessing
 import time
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
@@ -35,6 +37,18 @@ class ExactResult:
     pruned: int
     gap: float
     runtime_s: float
+    workers: int = 1
+
+
+@dataclass(frozen=True)
+class _EnumerationResult:
+    objective: float
+    solution: PlanSolution | None
+    explored: int
+    timed_out: bool
+
+
+_WORKER_CONTEXT = {}
 
 
 def _edge_candidates(library, src, tgt):
@@ -173,14 +187,126 @@ def _plan_variants(routes, scenario, library):
                            candidate_ids=tuple(combo))
 
 
+def _solution_key(solution):
+    if solution is None:
+        return ((), ())
+    return (solution.routes, solution.candidate_ids)
+
+
+def _is_better(objective, solution, best_objective, best_solution):
+    if objective < best_objective - 1e-12:
+        return True
+    if (math.isfinite(objective) and math.isfinite(best_objective)
+            and abs(objective - best_objective) <= 1e-12):
+        return _solution_key(solution) < _solution_key(best_solution)
+    return False
+
+
+def _init_worker(scenario, library, field, spec, deadline):
+    _WORKER_CONTEXT.update({
+        "scenario": scenario,
+        "library": library,
+        "field": field,
+        "spec": spec,
+        "deadline": deadline,
+    })
+
+
+def _enumerate_assignments(assignments):
+    scenario = _WORKER_CONTEXT["scenario"]
+    library = _WORKER_CONTEXT["library"]
+    field = _WORKER_CONTEXT["field"]
+    spec = _WORKER_CONTEXT["spec"]
+    deadline = _WORKER_CONTEXT["deadline"]
+    U = scenario.n_uav
+    best_sol = None
+    best_obj = float("inf")
+    explored = 0
+    timed_out = False
+
+    for assign in assignments:
+        if time.time() > deadline:
+            timed_out = True
+            break
+        routes = [[] for _ in range(U)]
+        for task, uav in enumerate(assign):
+            routes[uav].append(task)
+        perms = (itertools.permutations(route) for route in routes)
+        for combo in itertools.product(*perms):
+            ordered = [list(c) for c in combo]
+            if time.time() > deadline:
+                timed_out = True
+                break
+            for solution in _plan_variants(ordered, scenario, library):
+                if time.time() > deadline:
+                    timed_out = True
+                    break
+                result = evaluate_solution(
+                    scenario, library, solution, field, spec,
+                    keep_timelines=False)
+                explored += 1
+                if (result.feasible
+                        and _is_better(result.objective, solution,
+                                       best_obj, best_sol)):
+                    best_obj = float(result.objective)
+                    best_sol = solution
+            if timed_out:
+                break
+        if timed_out:
+            break
+
+    return _EnumerationResult(
+        objective=best_obj,
+        solution=best_sol,
+        explored=explored,
+        timed_out=timed_out,
+    )
+
+
+def _chunks(items, count):
+    if count <= 1:
+        return [items]
+    size = int(math.ceil(len(items) / float(count)))
+    return [items[idx:idx + size] for idx in range(0, len(items), size)]
+
+
+def _run_enumerations(assignments, scenario, library, field, spec,
+                      deadline, workers):
+    if workers == 1:
+        return [
+            _enumerate_assignments_with_context(
+                assignments, scenario, library, field, spec, deadline)
+        ]
+    methods = multiprocessing.get_all_start_methods()
+    context = multiprocessing.get_context(
+        "fork" if "fork" in methods else "spawn")
+    chunks = [chunk for chunk in _chunks(assignments, workers) if chunk]
+    with ProcessPoolExecutor(
+            max_workers=min(workers, len(chunks)),
+            mp_context=context,
+            initializer=_init_worker,
+            initargs=(scenario, library, field, spec, deadline)) as executor:
+        futures = [executor.submit(_enumerate_assignments, chunk)
+                   for chunk in chunks]
+        return [future.result() for future in futures]
+
+
+def _enumerate_assignments_with_context(assignments, scenario, library, field,
+                                        spec, deadline):
+    _init_worker(scenario, library, field, spec, deadline)
+    return _enumerate_assignments(assignments)
+
+
 def solve_exact_tiny(scenario, library, field, max_tasks=4, time_limit_s=3600.0,
-                     objective_spec=None, max_leaves=2_000_000):
+                     objective_spec=None, max_leaves=2_000_000, workers=1):
     """Guarded exact enumeration of assignment x order x candidate.
 
     Raises ``ValueError`` *before* any permutation/product allocation when
     ``K > max_tasks`` or when the declared leaf-count upper bound exceeds
     ``max_leaves``.  Enumerates lazily with a deadline check at every nested
-    level (assignment, permutation, candidate).
+    level (assignment, permutation, candidate). ``workers > 1`` partitions
+    the assignment dimension across processes while evaluating the same
+    declared domain.
     """
     start = time.time()
     K = scenario.n_tasks
@@ -193,46 +319,27 @@ def solve_exact_tiny(scenario, library, field, max_tasks=4, time_limit_s=3600.0,
         raise ValueError(
             "declared leaf count upper bound %d exceeds max_leaves=%d; "
             "refusing to start an intractable exact search" % (leaves, max_leaves))
+    if workers < 1:
+        raise ValueError("workers must be >= 1")
 
     spec = (objective_spec if objective_spec is not None
             else default_objective_spec(scenario, library))
     lb = _no_contention_lower_bound(scenario, library, spec)
 
+    assignments = list(itertools.product(range(U), repeat=K))
+    worker_results = _run_enumerations(
+        assignments, scenario, library, field, spec,
+        deadline=start + time_limit_s, workers=workers)
+    explored = sum(result.explored for result in worker_results)
+    timed_out = any(result.timed_out for result in worker_results)
     best_sol = None
     best_obj = float("inf")
-    explored = 0
-    timed_out = False
-
-    def deadline_hit():
-        return time.time() - start > time_limit_s
-
-    for assign in itertools.product(range(U), repeat=K):
-        if deadline_hit():
-            timed_out = True
-            break
-        routes = [[] for _ in range(U)]
-        for t, u in enumerate(assign):
-            routes[u].append(t)
-        perms = (itertools.permutations(r) for r in routes)
-        for combo in itertools.product(*perms):
-            ordered = [list(c) for c in combo]
-            if deadline_hit():
-                timed_out = True
-                break
-            for sol in _plan_variants(ordered, scenario, library):
-                if deadline_hit():
-                    timed_out = True
-                    break
-                res = evaluate_solution(scenario, library, sol, field, spec,
-                                        keep_timelines=False)
-                explored += 1
-                if res.feasible and res.objective < best_obj:
-                    best_obj = res.objective
-                    best_sol = sol
-            if timed_out:
-                break
-        if timed_out:
-            break
+    for result in worker_results:
+        if (result.solution is not None
+                and _is_better(result.objective, result.solution,
+                               best_obj, best_sol)):
+            best_obj = result.objective
+            best_sol = result.solution
 
     runtime = time.time() - start
     empty = PlanSolution(routes=tuple(() for _ in range(U)),
@@ -243,11 +350,11 @@ def solve_exact_tiny(scenario, library, field, max_tasks=4, time_limit_s=3600.0,
             return ExactResult(incumbent=empty, objective=float("inf"),
                                lower_bound=lb, proven_optimal=False,
                                explored=explored, pruned=0, gap=float("inf"),
-                               runtime_s=runtime)
+                               runtime_s=runtime, workers=workers)
         return ExactResult(incumbent=best_sol, objective=best_obj,
                            lower_bound=lb, proven_optimal=False,
                            explored=explored, pruned=0, gap=_gap(best_obj, lb),
-                           runtime_s=runtime)
+                           runtime_s=runtime, workers=workers)
 
     # full domain covered without timeout
     if best_sol is None:
@@ -255,9 +362,9 @@ def solve_exact_tiny(scenario, library, field, max_tasks=4, time_limit_s=3600.0,
         return ExactResult(incumbent=empty, objective=float("inf"),
                            lower_bound=float("inf"), proven_optimal=False,
                            explored=explored, pruned=0, gap=float("inf"),
-                           runtime_s=runtime)
+                               runtime_s=runtime, workers=workers)
 
     return ExactResult(incumbent=best_sol, objective=best_obj,
                        lower_bound=best_obj, proven_optimal=True,
                        explored=explored, pruned=0, gap=0.0,
-                       runtime_s=runtime)
+                       runtime_s=runtime, workers=workers)

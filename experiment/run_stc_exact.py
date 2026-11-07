@@ -44,6 +44,7 @@ DEFAULT_CONFIG = {
     "time_limit_s": 3600.0,
     "max_leaves": 2_000_000,
     "iterations": 1000,
+    "workers": 1,
 }
 
 EXPECTED_ARTIFACTS = (
@@ -91,7 +92,7 @@ def _evaluated_metrics(scenario, library, solution, field, spec):
 
 def run_exact_scenario(base_scenario, task_count, *, spacing_m,
                        time_limit_s, max_leaves, iterations,
-                       checkpoint=None):
+                       workers=1, checkpoint=None):
     """Evaluate exact enumeration and Proposed on the same K-task subproblem."""
     if task_count < 1 or task_count > base_scenario.n_tasks:
         raise ValueError(
@@ -123,6 +124,7 @@ def run_exact_scenario(base_scenario, task_count, *, spacing_m,
         time_limit_s=time_limit_s,
         objective_spec=spec,
         max_leaves=max_leaves,
+        workers=workers,
     )
     exact_runtime = time.perf_counter() - start
     exact_metrics = _evaluated_metrics(
@@ -148,6 +150,7 @@ def run_exact_scenario(base_scenario, task_count, *, spacing_m,
         "wall_runtime_s": float(exact_runtime),
         "time_limit_s": float(time_limit_s),
         "max_leaves": int(max_leaves),
+        "exact_workers": int(workers),
         "solution": _solution_payload(exact.incumbent),
     }
     if checkpoint is not None:
@@ -187,6 +190,7 @@ def main(argv=None):
         help="comma-separated task counts, e.g. 4,6,8")
     parser.add_argument("--time-limit-s", type=float, default=None)
     parser.add_argument("--max-leaves", type=int, default=None)
+    parser.add_argument("--workers", type=int, default=None)
     args = parser.parse_args(argv)
 
     try:
@@ -199,12 +203,16 @@ def main(argv=None):
         cfg["time_limit_s"] = args.time_limit_s
     if args.max_leaves is not None:
         cfg["max_leaves"] = args.max_leaves
+    if args.workers is not None:
+        cfg["workers"] = args.workers
     if not cfg["exact_tasks"] or any(k <= 0 for k in cfg["exact_tasks"]):
         parser.error("--tasks must contain positive integers")
     if cfg["time_limit_s"] <= 0.0:
         parser.error("--time-limit-s must be positive")
     if cfg["max_leaves"] <= 0:
         parser.error("--max-leaves must be positive")
+    if cfg["workers"] < 1:
+        parser.error("--workers must be >= 1")
 
     if args.dry_run:
         print("exact benchmark: tasks=%s uav_nums=%s map_seeds=%s task_seeds=%s"
@@ -232,6 +240,7 @@ def main(argv=None):
                 time_limit_s=cfg["time_limit_s"],
                 max_leaves=cfg["max_leaves"],
                 iterations=cfg["iterations"],
+                workers=cfg["workers"],
                 checkpoint=emit,
             )
 
