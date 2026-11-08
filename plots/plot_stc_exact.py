@@ -223,17 +223,6 @@ def make_figure(runs, out_dir):
         x, np.log10(proposed_runtime),
         color=METHOD_COLORS["proposed_stc_alns"], marker="s", lw=1.2,
         ms=4.2, label="Proposed STC-ALNS")
-    for idx, row in enumerate(rows):
-        ax_time.annotate(
-            "%.1fs" % row["exact_runtime_s"], (idx, np.log10(
-                row["exact_runtime_s"])), xytext=(0, 5),
-            textcoords="offset points", ha="center", va="bottom",
-            fontsize=5.8, color=METHOD_COLORS["exact_discrete_enumeration"])
-        ax_time.annotate(
-            "%.0fs" % row["proposed_runtime_s"], (idx, np.log10(
-                row["proposed_runtime_s"])), xytext=(0, -9),
-            textcoords="offset points", ha="center", va="top",
-            fontsize=5.8, color=METHOD_COLORS["proposed_stc_alns"])
     ax_time.set_xticks(x)
     ax_time.set_xticklabels(["K=%d" % task for task in stats["task_counts"]])
     ax_time.set_ylabel("Runtime (s, log scale)")
