@@ -18,11 +18,11 @@
 | U=2 GATSAC s43 | s43 | 0–4 | 1 | 已完成 |
 | U=2 GATSAC s44 | s44 | 0–4 | 1 | 已完成 |
 | U=3 规模探针 | s42 | 0 | 6 | 已完成 |
-| U=4 规模探针 | s42 | 0 | 6 | 运行中 |
+| U=4 规模探针 | s42 | 0 | 6 | 已完成 |
 | RQ1 | 一个代表场景 | N/A | 多生成器 | 已完成 |
 | RQ3 | 一个代表场景 | N/A | 3 评价模式 | 已完成 |
 | RQ5 消融 | s42 | 0–4 | full + 7 ablations | 已完成 |
-| exact | K=4/6/8 | N/A | 精确枚举 vs Proposed | K=4 已封存；K=6/8 运行中 |
+| exact | K=4/6/8 | N/A | 精确枚举 vs Proposed | 已完成；K=4/6 完整枚举，K=8 超时 |
 
 ## 正式 run ID
 
@@ -41,7 +41,10 @@ GATSAC 补充：
 规模探针：
 
 - `formal-u3-s42-single`
-- `formal-u4-s42-single`
+- `formal-u4-s42-single-r2`
+- `formal-exact-k4-s42`
+- `formal-exact-k6-s42`
+- `formal-exact-k8-s42`
 
 这两个 run 只使用：
 
@@ -70,8 +73,10 @@ formal-u2-s44-r2
 - `results/figs_u3_routes_s42/`：U=3 六方法最终路线图；
 - `results/figs_ablation_s42_20261107/`：RQ5 五-seed 配对消融图、
   statistics JSON/CSV、provenance 和 reporting bundle。
-- Exact K=4 已完整枚举，exact 与 Proposed 在该任务前缀上均不可行；
-  K=6/8 完成后另出 exact 汇总表和交接包。
+- Exact K=4/6 已完整枚举，exact 与 Proposed 均不可行；
+- Exact K=8 在 6 小时上限内枚举 318,597/362,880 个叶子，未完成证明；
+- U=4 s42 六方法完成：五个基线不可行，Proposed 可行，
+  `T=391.0 s`、`D=647.5 s`、`J=0.860767`。
 
 ## 论文可声称内容
 
