@@ -224,6 +224,8 @@ def main(argv=None):
             train_steps.append(int(info["t"]))
             train_visited.append(int(metrics["visited_tasks"]))
             train_uploaded.append(int(metrics["uploaded_tasks"]))
+            if completed_episodes % 10 == 0:
+                write_progress()
             if (completed_episodes == 1
                     or completed_episodes % args.eval_interval == 0):
                 eval_reward, eval_metrics, _ = _run_episode(
