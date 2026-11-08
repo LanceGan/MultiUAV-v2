@@ -204,12 +204,12 @@ class SharedBandwidthE2EEnv:
         for i, sample in enumerate(samples):
             sector = self._select_sector(sample)
             self.outage_s[i] += float(sample.g2a_outage[sector]) * self.dt
-            rewards[i] += 2.0 * uploaded[i] / self.data_ref
+            rewards[i] += 5.0 * uploaded[i] / self.data_ref
             rewards[i] -= 2.0 * float(sample.g2a_outage[sector])
 
         newly = self._service_tasks()
         for i, _k, _dist in newly:
-            rewards[i] += 20.0
+            rewards[i] += 100.0
 
         for k in np.flatnonzero(self.visited & (self.upload_step < 0)):
             i = int(self.assigned_uav[k])
@@ -220,12 +220,16 @@ class SharedBandwidthE2EEnv:
             current = self._nearest_unvisited_distance(i)
             denom = max(self.v_max * self.dt, 1e-9)
             rewards[i] += 2.0 * (previous_nearest[i] - current) / denom
+            # Pan-style absolute distance-to-target penalty. The progress term
+            # supplies the gradient; this term prevents hovering in open space
+            # from becoming reward-optimal.
+            rewards[i] -= 0.2 * current / denom
 
         all_uploaded = bool(np.all(self.upload_step >= 0))
         terminal = bool(np.all(self.visited) and all_uploaded)
         truncated = (not terminal) and self.t >= self.T
         if terminal:
-            rewards += 200.0
+            rewards += 1000.0
 
         info = {
             "terminal": terminal,
@@ -262,6 +266,9 @@ class SharedBandwidthE2EEnv:
             "total_delay_s": total_delay_s,
             "outage_ratio": outage_ratio.tolist(),
             "max_outage_ratio": float(outage_ratio.max(initial=0.0)),
+            "nearest_unvisited_m": [
+                self._nearest_unvisited_distance(i)
+                for i in range(self.n_uav)],
             "visited_tasks": int(np.sum(self.visited)),
             "uploaded_tasks": int(np.sum(self.upload_step >= 0)),
             "collisions": int(self.collisions),

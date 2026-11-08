@@ -61,11 +61,12 @@ def json_load(path):
 
 
 def _score(metrics, reward):
+    remaining = sum(metrics.get("nearest_unvisited_m", []))
     return (
         int(bool(metrics["feasible"])),
         int(metrics["uploaded_tasks"]),
         int(metrics["visited_tasks"]),
-        -float(metrics["makespan_s"]),
+        -float(remaining),
         float(reward),
     )
 
@@ -269,6 +270,7 @@ def main(argv=None):
             "makespan_s": final_metrics["makespan_s"],
             "total_delay_s": final_metrics["total_delay_s"],
             "max_outage_ratio": final_metrics["max_outage_ratio"],
+            "nearest_unvisited_m": final_metrics["nearest_unvisited_m"],
             "visited_tasks": final_metrics["visited_tasks"],
             "uploaded_tasks": final_metrics["uploaded_tasks"],
             "collisions": final_metrics["collisions"],
