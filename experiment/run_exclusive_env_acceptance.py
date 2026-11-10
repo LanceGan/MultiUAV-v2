@@ -9,6 +9,7 @@ one-to-one, and all UAVs reach the terminal.
 
 import argparse
 import io
+import json
 import math
 from pathlib import Path
 import sys
@@ -47,12 +48,18 @@ def run(args):
         args.uav_num, task_seed=args.task_seed, map_seed=args.map_seed
     )
     field = PerSectorRadioField.from_scenario(scenario, spacing_m=args.spacing_m)
-    assignment = region_partition(scenario, seed=args.task_seed)
-
-    routes = {}
-    for uav_id, cluster in enumerate(assignment.clusters):
-        sequence = distance_nn_2opt(scenario, cluster, seed=args.task_seed)
-        routes[uav_id] = list(sequence.route)
+    if args.routes_json:
+        payload = json.loads(Path(args.routes_json).read_text(encoding="utf-8"))
+        raw_routes = payload.get("routes", payload)
+        routes = {int(k): [int(t) for t in v] for k, v in raw_routes.items()}
+        route_source = str(Path(args.routes_json).resolve())
+    else:
+        assignment = region_partition(scenario, seed=args.task_seed)
+        routes = {}
+        for uav_id, cluster in enumerate(assignment.clusters):
+            sequence = distance_nn_2opt(scenario, cluster, seed=args.task_seed)
+            routes[uav_id] = list(sequence.route)
+        route_source = "region_partition + distance_nn_2opt"
 
     env = ExclusiveSectorFixedRouteEnv(
         scenario,
@@ -73,8 +80,7 @@ def run(args):
         "task_seed": int(args.task_seed),
         "map_seed": int(args.map_seed),
         "policy": args.policy,
-        "assignment": "region_partition",
-        "sequencing": "distance_nn_2opt",
+        "route_source": route_source,
         "arrival_radius_m": float(args.arrival_radius_m),
         "safe_distance_m": float(args.safe_distance_m),
         "outage_probability_threshold": float(args.outage_probability_threshold),
@@ -180,6 +186,7 @@ def main(argv=None):
     parser.add_argument("--spacing-m", type=float, default=200.0)
     parser.add_argument("--run-root", default="results/runs")
     parser.add_argument("--run-id", default="acceptance-exclusive-u2-s42-r1")
+    parser.add_argument("--routes-json", default=None)
     parser.add_argument(
         "--policy", choices=("buffered_waypoint", "mapguide"),
         default="buffered_waypoint",

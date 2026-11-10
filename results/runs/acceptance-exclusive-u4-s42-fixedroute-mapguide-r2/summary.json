@@ -1,0 +1,173 @@
+{
+  "run_id": "acceptance-exclusive-u4-s42-fixedroute-mapguide-r2",
+  "status": "rejected",
+  "elapsed_s": 14.716886958107352,
+  "metrics": {
+    "feasible": false,
+    "failure_reasons": [
+      "unserved_tasks",
+      "unfinished_uploads",
+      "terminal_not_reached",
+      "collision",
+      "contiguous_outage_excess"
+    ],
+    "makespan_s": 1000.0,
+    "total_delay_s": 985.5,
+    "delay_count": 38,
+    "visited_tasks": 39,
+    "uploaded_tasks": 38,
+    "unserved_tasks": 1,
+    "unfinished_uploads": 2,
+    "outage_ratio": [
+      0.42234935204631835,
+      0.2773487835793523,
+      0.7346069024907351,
+      0.3691549030982068
+    ],
+    "max_outage_ratio": 0.7346069024907351,
+    "total_expected_outage_s": [
+      163.23802456590204,
+      119.25997693912147,
+      734.6069024907351,
+      159.47491813842535
+    ],
+    "max_contiguous_outage_s": [
+      116.0,
+      11.5,
+      516.5,
+      15.5
+    ],
+    "outage_max_s": 20.0,
+    "outage_probability_threshold": 0.5,
+    "early_service_arrivals": 0,
+    "early_terminal_arrivals": 0,
+    "collisions": 2,
+    "out_of_bounds": 0,
+    "sector_conflicts": 0,
+    "safety_projections": 0,
+    "terminal_distances_m": [
+      0.999999768360426,
+      1.000000429810012,
+      3256.4497166500196,
+      3.54450023350221
+    ],
+    "completion_step": [
+      773,
+      860,
+      -1,
+      864
+    ],
+    "max_stall_steps": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "energy_j": [
+      309541.31128279894,
+      503284.14371814096,
+      672876.3427866031,
+      503035.6678116767
+    ],
+    "reward_term_totals": {
+      "time": [
+        -0.7730000000000006,
+        -0.8600000000000007,
+        -1.9999999999998905,
+        -0.8640000000000007
+      ],
+      "progress": [
+        0.889611284255982,
+        1.552226011608825,
+        1.8125351768308748,
+        1.548581738281251
+      ],
+      "guide_alignment": [
+        0.22600000000000017,
+        0.3909999999999996,
+        0.4554999999992849,
+        0.3890000000000003
+      ],
+      "boundary": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "collision": [
+        -0.039330214515718796,
+        -0.00971298910527023,
+        0.0,
+        -0.029617225410448568
+      ],
+      "upload": [
+        0.4110949487297218,
+        0.26532637473993503,
+        0.2973827966166255,
+        0.27691291200037815
+      ],
+      "outage": [
+        -6.5295209826360345,
+        -4.7703990775648615,
+        -29.384276099630323,
+        -6.378996725537002
+      ],
+      "service": [
+        10.0,
+        10.0,
+        9.0,
+        10.0
+      ],
+      "terminal": [
+        10.0,
+        10.0,
+        0.0,
+        10.0
+      ],
+      "early_arrival": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "invalid_stall": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "qos_risk": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "qos": [
+        -10.0,
+        0.0,
+        -10.0,
+        0.0
+      ],
+      "energy": [
+        -0.03095413112828037,
+        -0.05032841437181383,
+        -0.06728763427865198,
+        -0.05030356678116739
+      ]
+    },
+    "steps": 2000
+  },
+  "reference": {
+    "t_ref_s": 1000.0,
+    "d_ref_s": 985.5,
+    "source": "acceptance policy: mapguide",
+    "is_formal_reference": false
+  },
+  "sector_count": 18,
+  "route_lengths": {
+    "0": 10,
+    "1": 10,
+    "2": 10,
+    "3": 10
+  }
+}
