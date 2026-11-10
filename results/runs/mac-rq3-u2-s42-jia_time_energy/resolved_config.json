@@ -1,0 +1,39 @@
+{
+  "experiment": "rq3",
+  "method": "jia_time_energy",
+  "uav_num": 2,
+  "scenario_label": "s42",
+  "seed": 42,
+  "route_source": "4D + MapGuide",
+  "executor": "MapGuide + one-step safety projection",
+  "safety_outage_threshold": 0.2,
+  "arrival_radius_m": 10.0,
+  "outage_max_s": 20.0,
+  "horizon_steps": 2000,
+  "routes": {
+    "0": [
+      0,
+      18,
+      12,
+      19,
+      3,
+      5,
+      9,
+      15,
+      6,
+      4
+    ],
+    "1": [
+      2,
+      10,
+      8,
+      16,
+      17,
+      7,
+      11,
+      14,
+      1,
+      13
+    ]
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "experiment": "rq2",
+  "method": "spatial",
+  "uav_num": 2,
+  "scenario_label": "s42",
+  "seed": 42,
+  "route_source": "GA-EQTSP + MapGuide",
+  "executor": "MapGuide + one-step safety projection",
+  "safety_outage_threshold": 0.2,
+  "arrival_radius_m": 10.0,
+  "outage_max_s": 20.0,
+  "horizon_steps": 2000,
+  "routes": {
+    "0": [
+      4,
+      8,
+      10,
+      16,
+      6
+    ],
+    "1": [
+      0,
+      2,
+      18,
+      12,
+      19,
+      13,
+      3,
+      5,
+      1,
+      15,
+      17,
+      9,
+      7,
+      11,
+      14
+    ]
+  }
+}

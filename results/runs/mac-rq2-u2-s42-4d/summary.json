@@ -1,0 +1,142 @@
+{
+  "run_id": "mac-rq2-u2-s42-4d",
+  "suite": "rq2",
+  "method": "4d",
+  "status": "accepted",
+  "metrics": {
+    "feasible": true,
+    "failure_reasons": [],
+    "makespan_s": 372.5,
+    "total_delay_s": 322.0,
+    "delay_count": 20,
+    "visited_tasks": 20,
+    "uploaded_tasks": 20,
+    "unserved_tasks": 0,
+    "unfinished_uploads": 0,
+    "outage_ratio": [
+      0.24346385900211656,
+      0.25165128052264973
+    ],
+    "max_outage_ratio": 0.25165128052264973,
+    "total_expected_outage_s": [
+      63.909262988055595,
+      93.74010199468702
+    ],
+    "max_contiguous_outage_s": [
+      15.0,
+      17.5
+    ],
+    "outage_max_s": 20.0,
+    "outage_probability_threshold": 0.5,
+    "early_service_arrivals": 0,
+    "early_terminal_arrivals": 0,
+    "collisions": 0,
+    "out_of_bounds": 0,
+    "sector_conflicts": 0,
+    "safety_projections": 505,
+    "terminal_distances_m": [
+      0.9999994809484444,
+      1.0000004172179393
+    ],
+    "completion_step": [
+      525,
+      745
+    ],
+    "max_stall_steps": [
+      0,
+      0
+    ],
+    "energy_j": [
+      276224.5726068686,
+      475313.5809119261
+    ],
+    "reward_term_totals": {
+      "time": [
+        -0.5250000000000004,
+        -0.7450000000000006
+      ],
+      "progress": [
+        0.8411998101960202,
+        1.4848358879089363
+      ],
+      "guide_alignment": [
+        0.21400000000000016,
+        0.3725000000000003
+      ],
+      "boundary": [
+        0.0,
+        0.0
+      ],
+      "collision": [
+        0.0,
+        0.0
+      ],
+      "upload": [
+        0.29901116896223634,
+        0.35252694202407003
+      ],
+      "outage": [
+        -2.5563705195222286,
+        -3.7496040797874737
+      ],
+      "service": [
+        10.0,
+        10.0
+      ],
+      "terminal": [
+        10.0,
+        10.0
+      ],
+      "early_arrival": [
+        0.0,
+        0.0
+      ],
+      "invalid_stall": [
+        0.0,
+        0.0
+      ],
+      "qos_risk": [
+        0.0,
+        0.0
+      ],
+      "qos": [
+        0.0,
+        0.0
+      ],
+      "energy": [
+        -0.02762245726068718,
+        -0.04753135809119248
+      ]
+    },
+    "steps": 745
+  },
+  "objective": 0.744243816805276,
+  "t_ref_s": 436.5,
+  "d_ref_s": 507.0,
+  "routes": {
+    "0": [
+      0,
+      4,
+      6,
+      15,
+      9,
+      5,
+      3,
+      19,
+      12,
+      18
+    ],
+    "1": [
+      2,
+      13,
+      1,
+      14,
+      10,
+      8,
+      16,
+      17,
+      7,
+      11
+    ]
+  }
+}
