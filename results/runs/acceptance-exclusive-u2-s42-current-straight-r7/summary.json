@@ -1,0 +1,123 @@
+{
+  "run_id": "acceptance-exclusive-u2-s42-current-straight-r7",
+  "status": "accepted",
+  "elapsed_s": 3.7292621668893844,
+  "metrics": {
+    "feasible": true,
+    "failure_reasons": [],
+    "makespan_s": 436.5,
+    "total_delay_s": 507.0,
+    "delay_count": 20,
+    "visited_tasks": 20,
+    "uploaded_tasks": 20,
+    "unserved_tasks": 0,
+    "unfinished_uploads": 0,
+    "outage_ratio": [
+      0.1798536864273459,
+      0.27444509423141944
+    ],
+    "max_outage_ratio": 0.27444509423141944,
+    "total_expected_outage_s": [
+      78.50613412553648,
+      52.2817904510854
+    ],
+    "max_contiguous_outage_s": [
+      15.0,
+      19.0
+    ],
+    "outage_max_s": 20.0,
+    "outage_probability_threshold": 0.5,
+    "early_service_arrivals": 0,
+    "early_terminal_arrivals": 0,
+    "collisions": 0,
+    "out_of_bounds": 0,
+    "sector_conflicts": 0,
+    "safety_projections": 0,
+    "terminal_distances_m": [
+      5.000000000000082,
+      5.000000000000027
+    ],
+    "completion_step": [
+      873,
+      381
+    ],
+    "max_stall_steps": [
+      0,
+      0
+    ],
+    "energy_j": [
+      316257.8665318593,
+      232400.57895593543
+    ],
+    "reward_term_totals": {
+      "time": [
+        -0.8730000000000007,
+        -0.3810000000000003
+      ],
+      "progress": [
+        0.8772370192568741,
+        0.7230617120263415
+      ],
+      "guide_alignment": [
+        0.22491211220369778,
+        0.1827858556178786
+      ],
+      "boundary": [
+        0.0,
+        0.0
+      ],
+      "collision": [
+        0.0,
+        0.0
+      ],
+      "upload": [
+        0.37476726143409594,
+        0.2767708495522084
+      ],
+      "outage": [
+        -3.1402453650214905,
+        -2.0912716180434177
+      ],
+      "service": [
+        10.0,
+        10.0
+      ],
+      "terminal": [
+        10.0,
+        10.0
+      ],
+      "early_arrival": [
+        0.0,
+        0.0
+      ],
+      "invalid_stall": [
+        0.0,
+        0.0
+      ],
+      "qos_risk": [
+        0.0,
+        0.0
+      ],
+      "qos": [
+        0.0,
+        0.0
+      ],
+      "energy": [
+        -0.031625786653186175,
+        -0.023240057895593823
+      ]
+    },
+    "steps": 873
+  },
+  "reference": {
+    "t_ref_s": 436.5,
+    "d_ref_s": 507.0,
+    "source": "acceptance policy: buffered_waypoint",
+    "is_formal_reference": true
+  },
+  "sector_count": 12,
+  "route_lengths": {
+    "0": 10,
+    "1": 10
+  }
+}
