@@ -9,7 +9,7 @@
 | 机器 | 平台 | 分支 | 角色 |
 |---|---|---|---|
 | Mac（参考机） | macOS 15.7 arm64, Apple Silicon | `feat/mac` | 执行全部正式实验（U=2/3/4 及其补充）；文档主干 |
-| Windows 新机 | Windows 11, i5-12500H（4P+8E 12 核） | `feat/win` | 论文写作 + 指定的 U=2 teacher-anchored MADRL 正式训练 |
+| Windows 新机 | Windows 11, i5-12500H（4P+8E 12 核） | `feat/win` | 论文写作 + 指定 MADRL 正式训练与 U=3/U=4 MA-D3QN 规模探针 |
 
 两分支**互不合并、互不 rebase**，只向 `origin` 各自推送；汇合时机与方式由项目负责人决定。
 
@@ -46,8 +46,8 @@
 |---|---|---|
 | U=2 主实验（s42/s43/s44，K=20） | **Mac** | 三场景 × method seeds 0–4，六种完整方法 |
 | U=2 GATSAC 补充 | **Mac** | s42 已完成；s43 运行中；s44 待补 |
-| U=3 规模探针 | **Mac** | 只跑 s42，`method_seed=0`，六种完整方法 |
-| U=4 规模探针 | **Mac** | 只跑 s42，`method_seed=0`，六种完整方法 |
+| U=3 规模探针 | **Mac + Windows** | MA-D3QN 由 Windows 跑；其余系统方法由 Mac 跑，s42 单 seed |
+| U=4 规模探针 | **Mac + Windows** | MA-D3QN 由 Windows 跑；其余系统方法由 Mac 跑，s42 单 seed |
 | RQ1/RQ3 | **Mac** | 各一个代表场景 |
 | RQ5 消融 | **Mac** | s42 单场景 × method seeds 0–4 |
 | exact benchmark | **Mac** | K=4/6/8 |
@@ -101,3 +101,18 @@ Mac 已完成 TA-SharedTD3-BC 和 TA-MAPPO 的 100 集稳定性短测，两者�
 
 正式预算均为 3000 集、seed 42、horizon 2000、eval interval 50。不得恢复
 旧标准版本参数，也不得把一个正式 run 的结果与 Mac 短测混入同一统计族。
+
+## 9. MA-D3QN U=3/U=4 规模探针（2026-11-11）
+
+Mac 已确认 U=2 MA-D3QN 的 `best_constraint.pth` 可行，但训练过程存在间歇性
+QoS 失败。论文将这些规模实验定位为 **single-seed scale probes**，因此以最佳
+检查点是否满足硬约束作为验收标准，同时必须报告评估历史。
+
+Windows 按 [`docs/ma-d3qn-scale-handoff.md`](docs/ma-d3qn-scale-handoff.md)
+启动：
+
+- `win-formal-u3-s42-ma-d3qn`
+- `win-formal-u4-s42-ma-d3qn`
+
+两个 run 均从零训练，3000 集、seed 42、horizon 2000。不得加载 U=2
+checkpoint，也不得增加 method seed。
