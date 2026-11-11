@@ -5,30 +5,28 @@
 
 ## 1. 当前任务
 
-按 `docs/exclusive-experiment-plan.md` §8/§9，Windows 负责全部学习型正式训练：
-SharedTD3-BC、MAPPO、MA-D3QN（各 10000 集 × horizon 2000，seed 42，warm-start）。
+按 `docs/teacher-anchored-marl.md` §5 与 `mac-win.md` §8，Windows 负责：
+
+- TA-SharedTD3-BC：`win-formal-u2-s42-sharedtd3bc-ta`（3000 集）
+- TA-MAPPO：`win-formal-u2-s42-mappo-ta`（3000 集）
+- MA-D3QN（原始 10000 集正式训练，继续运行）
 
 ## 2. 训练状态（2026-11-11）
 
-| 方法 | 状态 | 进度 | 关键结论 |
+| 方法 | 状态 | 预算 | 备注 |
 |---|---|---|---|
-| MA-D3QN | **运行中** | 3300/10000（33%） | 唯一真正在学习；确定性 eval 多次 feasible=True（ep 3050/3150/3250/3300）；best.pth / best_completion.pth 持续更新 |
-| SharedTD3-BC | **已停** | 2100/10000（21%） | 学习策略发散：非引导集 0/20~1/20、2000 步截断、reward -55~-180；best.pth 自第 1 集后 18h 未更新 |
-| MAPPO | **已停** | 4050/10000（40.5%） | 同样发散：非引导集 0/20 震荡；best.pth 停 8.5h |
+| MA-D3QN | 运行中 | 10000 集 | ep 5300/10000（53%），仍 20/20；eval 间歇 feasible |
+| TA-SharedTD3-BC | 运行中 | 3000 集 | ep 1 feasible=True，warm-start 加载成功 |
+| TA-MAPPO | 运行中 | 3000 集 | ep 1 feasible=True，warm-start 加载成功 |
 
-## 3. 跨机一致性
+## 3. 旧标准版结果（已作废）
 
-Mac 独立实验同样发现 SharedTD3 / MAPPO 未学会、MA-D3QN 效果最佳，与 Windows 结论一致。
-建议论文以 MA-D3QN 为学习型主方法，SharedTD3-BC / MAPPO 作为诚实负结果。
+旧 SharedTD3-BC（2100 集）与 MAPPO（4050 集）未学会、已停止，作为负结果留存于
+`results/formal_win/win-formal-u2-s42-{sharedtd3bc,mappo}`；
+不得与新 TA 版混为同一方法。
 
 ## 4. 执行合规
 
-- 命令严格按 §9，单 seed 42，无超参改动；三份 warm-start `best_constraint.pth` 均正确加载。
-- 环境 `.venv`：Python 3.13.14 + torch 2.15.0+cpu，与 requirements.lock.txt 一致。
-- GPU 未使用：锁定 torch 2.15.0 无 CUDA 轮子；另以 2.14.1+cu130 实测 GPU 不加速。
-
-## 5. 产物与交接
-
-- 运行日志：`results/formal_win_logs/win-formal-u2-s42-{ma-d3qn,mappo,sharedtd3bc}.log`
-- 终止记录：`results/formal_win_logs/STOPPED-sharedtd3-mappo.md`
-- 正式结果待 MA-D3QN 跑完后按 §10 密封，经 `paper_handoff/` + SHA256 交接。
+- 命令严格按 `docs/teacher-anchored-marl.md` §5，seed 42、horizon 2000、eval interval 50。
+- 代码基于 `a56e8f7`；相关测试 34 项全通过。
+- 环境 `.venv`：Python 3.13.14 + torch 2.15.0+cpu。
