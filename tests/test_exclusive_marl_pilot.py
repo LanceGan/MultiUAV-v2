@@ -1,6 +1,14 @@
 """Checkpoint-selection tests for exclusive-environment MADRL pilots."""
 
-from experiment.run_exclusive_marl_pilot import _completion_score, _score
+import numpy as np
+import torch
+
+from experiment.run_exclusive_marl_pilot import (
+    _blend_teacher_actions,
+    _completion_score,
+    _score,
+)
+from trajectory import mappo
 
 
 def _metrics(**overrides):
@@ -13,6 +21,8 @@ def _metrics(**overrides):
         "early_service_arrivals": 0,
         "early_terminal_arrivals": 0,
         "completion_step": [100, 100],
+        "makespan_s": 100.0,
+        "total_delay_s": 20.0,
         "uploaded_tasks": 20,
         "visited_tasks": 20,
         "remaining_distance_m": 0.0,
@@ -39,7 +49,7 @@ def test_feasible_checkpoint_with_larger_qos_margin_wins():
     assert _score(safer) > _score(near_limit)
 
 
-def test_constraints_are_ranked_before_task_count():
+def test_completed_mission_is_ranked_before_idle_clean_mission():
     clean_low_progress = _metrics(
         visited_tasks=10,
         uploaded_tasks=10,
@@ -47,7 +57,7 @@ def test_constraints_are_ranked_before_task_count():
     )
     violating_complete = _metrics(out_of_bounds=1)
 
-    assert _score(clean_low_progress) > _score(violating_complete)
+    assert _score(violating_complete) > _score(clean_low_progress)
 
 
 def test_contiguous_outage_excess_is_ranked_before_other_constraints():
@@ -97,3 +107,57 @@ def test_completion_checkpoint_prefers_better_qos_margin():
     )
 
     assert _completion_score(safer) > _completion_score(near_limit)
+
+
+def test_mappo_rollout_preserves_teacher_actions_and_anchors_actor():
+    mappo.device = torch.device("cpu")
+    buffer = mappo._RolloutBuffer(
+        n_agents=2, local_state_dim=3, action_dim=2, capacity=4
+    )
+    max_action = np.asarray([1.0, np.pi], dtype=np.float32)
+    min_action = np.asarray([0.0, -np.pi], dtype=np.float32)
+
+    for index in range(4):
+        obs = [
+            np.asarray([index / 10.0, 0.0, 0.1], dtype=np.float32),
+            np.asarray([index / 10.0, 0.2, 0.3], dtype=np.float32),
+        ]
+        actions = [
+            np.asarray([0.4, 0.0], dtype=np.float32),
+            np.asarray([0.8, -0.2], dtype=np.float32),
+        ]
+        teacher_actions = [
+            np.asarray([0.5, 0.1], dtype=np.float32),
+            np.asarray([1.0, -0.1], dtype=np.float32),
+        ]
+        log_probs, value = 0.0, 0.0
+        buffer.store(
+            obs, actions, [log_probs, log_probs], 0.1, value, False, obs,
+            teacher_actions=teacher_actions,
+        )
+
+    np.testing.assert_allclose(
+        buffer.teacher_actions[0],
+        np.asarray([[0.5, 0.1], [1.0, -0.1]], dtype=np.float32),
+    )
+
+    model = mappo.MAPPO(
+        n_agents=2, local_state_dim=3, action_dim=2,
+        max_action=max_action, min_action=min_action,
+        batch_size=2, epochs=1, teacher_weight=1.0,
+    )
+    stats = model.train(buffer)
+
+    assert np.isfinite(stats["actor_loss"])
+    assert np.isfinite(stats["teacher_loss"])
+    assert stats["teacher_loss"] != 0.0
+
+
+def test_teacher_action_blend_keeps_action_parameterisation():
+    policy = [np.asarray([10.0, 3.0])]
+    teacher = [np.asarray([20.0, -3.0])]
+
+    blended = _blend_teacher_actions(policy, teacher, 0.5)
+
+    np.testing.assert_allclose(blended[0][:1], [15.0])
+    assert -np.pi <= blended[0][1] <= np.pi

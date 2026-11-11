@@ -84,7 +84,8 @@ def _load_routes(path, uav_num):
 
 
 def _make_model(
-    algorithm, env, actor_lr=1e-4, critic_lr=1e-3, demo_margin=0.8
+    algorithm, env, actor_lr=1e-4, critic_lr=1e-3, demo_margin=0.8,
+    teacher_anchor_weight=0.0,
 ):
     max_action = np.asarray(env.action_high, dtype=np.float32)
     min_action = np.asarray(env.action_low, dtype=np.float32)
@@ -92,6 +93,7 @@ def _make_model(
         return SharedTD3BC(
             env.local_obs_dim, env.action_dim, max_action, min_action,
             a_lr=float(actor_lr), c_lr=float(critic_lr),
+            teacher_anchor_weight=teacher_anchor_weight,
         )
     if algorithm == "MADDPG":
         return maddpg.MADDPG(
@@ -110,6 +112,7 @@ def _make_model(
             env.n_uav, env.local_obs_dim, env.action_dim,
             max_action, min_action, rollout_steps=env.T,
             a_lr=float(actor_lr), c_lr=float(critic_lr),
+            teacher_weight=teacher_anchor_weight,
         )
     if algorithm == "MA-D3QN":
         codec = ma_d3qn.DiscreteActionCodec(env.v_max)
@@ -161,6 +164,22 @@ def _guided_actions(env):
     return [env.guide_action(i) for i in range(env.n_uav)]
 
 
+def _blend_teacher_actions(policy_actions, teacher_actions, teacher_blend):
+    """Blend policy and safe-teacher actions in ``[speed, relative_heading]``."""
+    alpha = float(teacher_blend)
+    if not 0.0 <= alpha <= 1.0:
+        raise ValueError("teacher_blend must be in [0, 1]")
+    blended = []
+    for policy, teacher in zip(policy_actions, teacher_actions):
+        policy = np.asarray(policy, dtype=float).reshape(2)
+        teacher = np.asarray(teacher, dtype=float).reshape(2)
+        speed = (1.0 - alpha) * policy[0] + alpha * teacher[0]
+        heading = (1.0 - alpha) * policy[1] + alpha * teacher[1]
+        heading = (heading + np.pi) % (2.0 * np.pi) - np.pi
+        blended.append(np.asarray([speed, heading], dtype=float))
+    return blended
+
+
 def _mappo_guide_step(model, obs, actions):
     """Evaluate fixed MapGuide actions under the current MAPPO behaviour policy."""
     global_state = torch.tensor(
@@ -204,11 +223,21 @@ def _remaining_distance(env):
     ))
 
 
-def _evaluate(algorithm, model, env, safety_outage_threshold):
+def _evaluate(algorithm, model, env, safety_outage_threshold,
+              teacher_action_blend=0.0):
     obs = env.reset()
     total_reward = 0.0
     while True:
         actions = _deterministic_actions(algorithm, model, obs)
+        if teacher_action_blend > 0.0 and algorithm in ("SharedTD3", "MAPPO"):
+            teacher_actions = env.project_safe_actions(
+                _guided_actions(env),
+                outage_threshold=safety_outage_threshold,
+                update_stats=False,
+            )
+            actions = _blend_teacher_actions(
+                actions, teacher_actions, teacher_action_blend
+            )
         actions = env.project_safe_actions(
             actions, outage_threshold=safety_outage_threshold
         )
@@ -228,6 +257,9 @@ def _score(metrics):
     completion = np.asarray(metrics["completion_step"], dtype=float)
     return (
         int(bool(metrics["feasible"])),
+        int(metrics["visited_tasks"]),
+        int(metrics["uploaded_tasks"]),
+        -int(np.sum(completion < 0.0)),
         -int(np.sum(outage_excess > 0.0)),
         -float(np.sum(outage_excess)),
         -float(np.max(outage, initial=0.0)),
@@ -238,9 +270,8 @@ def _score(metrics):
             metrics["early_service_arrivals"]
             + metrics["early_terminal_arrivals"]
         ),
-        -int(np.sum(completion < 0.0)),
-        int(metrics["uploaded_tasks"]),
-        int(metrics["visited_tasks"]),
+        -float(metrics["makespan_s"]),
+        -float(metrics["total_delay_s"]),
         -float(metrics["remaining_distance_m"]),
         float(metrics["return"]),
     )
@@ -273,7 +304,8 @@ def _train_off_policy(algorithm, model, env, episodes, evaluation_interval,
                       best_path, best_completion_path, last_path,
                       guide_prob, guide_min_prob,
                       bc_weight, bc_min_weight, bc_decay_episodes,
-                      demo_fraction, safety_outage_threshold):
+                      demo_fraction, safety_outage_threshold,
+                      teacher_anchor_weight, teacher_action_blend):
     if algorithm == "SharedTD3":
         replay = DemoReplayBuffer(
             env.local_obs_dim, env.action_dim, max_size=100_000,
@@ -319,11 +351,22 @@ def _train_off_policy(algorithm, model, env, episodes, evaluation_interval,
             bc_weight_history.append(float(model.bc_weight))
 
         while True:
+            teacher_actions = env.project_safe_actions(
+                _guided_actions(env),
+                outage_threshold=safety_outage_threshold,
+                update_stats=False,
+            )
             actions = (
-                _guided_actions(env)
+                [np.asarray(action, dtype=float).copy()
+                 for action in teacher_actions]
                 if guided_run
                 else _select_actions(algorithm, model, obs, exploration)
             )
+            if not guided_run and teacher_action_blend > 0.0 and (
+                    algorithm == "SharedTD3"):
+                actions = _blend_teacher_actions(
+                    actions, teacher_actions, teacher_action_blend
+                )
             actions = env.project_safe_actions(
                 actions, outage_threshold=safety_outage_threshold
             )
@@ -336,6 +379,7 @@ def _train_off_policy(algorithm, model, env, episodes, evaluation_interval,
                     replay.add(
                         obs[uav_id], actions[uav_id], rewards[uav_id],
                         next_obs[uav_id], done, demo=guided_run,
+                        teacher_action=teacher_actions[uav_id],
                     )
             else:
                 replay.add(
@@ -363,7 +407,8 @@ def _train_off_policy(algorithm, model, env, episodes, evaluation_interval,
         if ((episode + 1) % evaluation_interval == 0
                 or episode == 0 or episode + 1 == episodes):
             eval_metrics = _evaluate(
-                algorithm, model, env, safety_outage_threshold
+                algorithm, model, env, safety_outage_threshold,
+                teacher_action_blend=teacher_action_blend,
             )
             score = _score(eval_metrics)
             completion_score = _completion_score(eval_metrics)
@@ -423,7 +468,7 @@ def _train_off_policy(algorithm, model, env, episodes, evaluation_interval,
 
 def _train_mappo(model, env, episodes, evaluation_interval, best_path,
                  best_completion_path, last_path, guide_prob, guide_min_prob,
-                 safety_outage_threshold):
+                 safety_outage_threshold, teacher_action_blend):
     replay = mappo._RolloutBuffer(
         env.n_uav, env.local_obs_dim, env.action_dim, env.T
     )
@@ -450,11 +495,26 @@ def _train_mappo(model, env, episodes, evaluation_interval, best_path,
         )
         guided_run = bool(np.random.rand() < episode_guide_probability)
         while True:
+            teacher_actions = env.project_safe_actions(
+                _guided_actions(env),
+                outage_threshold=safety_outage_threshold,
+                update_stats=False,
+            )
             if guided_run:
-                actions = _guided_actions(env)
+                actions = [
+                    np.asarray(action, dtype=float).copy()
+                    for action in teacher_actions
+                ]
                 log_probs, value = _mappo_guide_step(model, obs, actions)
             else:
                 actions, log_probs, value = model.act(obs, add_noise=True)
+                if teacher_action_blend > 0.0:
+                    actions = _blend_teacher_actions(
+                        actions, teacher_actions, teacher_action_blend
+                    )
+                    log_probs, value = _mappo_guide_step(
+                        model, obs, actions
+                    )
             projected = env.project_safe_actions(
                 actions, outage_threshold=safety_outage_threshold
             )
@@ -467,7 +527,8 @@ def _train_mappo(model, env, episodes, evaluation_interval, best_path,
             done = bool(terminal or info["truncated"])
             team_reward = float(np.sum(rewards))
             replay.store(
-                obs, actions, log_probs, team_reward, value, done, next_obs
+                obs, actions, log_probs, team_reward, value, done, next_obs,
+                teacher_actions=teacher_actions,
             )
             if replay.is_full():
                 model.train(replay)
@@ -498,7 +559,8 @@ def _train_mappo(model, env, episodes, evaluation_interval, best_path,
         if ((episode + 1) % evaluation_interval == 0
                 or episode == 0 or episode + 1 == episodes):
             eval_metrics = _evaluate(
-                "MAPPO", model, env, safety_outage_threshold
+                "MAPPO", model, env, safety_outage_threshold,
+                teacher_action_blend=teacher_action_blend,
             )
             score = _score(eval_metrics)
             completion_score = _completion_score(eval_metrics)
@@ -741,6 +803,7 @@ def run_algorithm(args, algorithm):
         algorithm, env,
         actor_lr=args.actor_lr, critic_lr=args.critic_lr,
         demo_margin=args.demo_margin,
+        teacher_anchor_weight=args.teacher_anchor_weight,
     )
     if args.init_checkpoint:
         init_path = Path(args.init_checkpoint)
@@ -772,6 +835,8 @@ def run_algorithm(args, algorithm):
         "bc_min_weight": float(args.bc_min_weight),
         "bc_decay_episodes": int(args.bc_decay_episodes),
         "demo_fraction": float(args.demo_fraction),
+        "teacher_anchor_weight": float(args.teacher_anchor_weight),
+        "teacher_action_blend": float(args.teacher_action_blend),
         "actor_lr": float(args.actor_lr),
         "critic_lr": float(args.critic_lr),
         "safety_outage_threshold": float(args.safety_outage_threshold),
@@ -820,6 +885,7 @@ def run_algorithm(args, algorithm):
             best_path, best_completion_path, last_path,
             args.guide_prob, args.guide_min_prob,
             args.safety_outage_threshold,
+            args.teacher_action_blend,
         )
     else:
         result = _train_off_policy(
@@ -828,6 +894,8 @@ def run_algorithm(args, algorithm):
             args.guide_prob, args.guide_min_prob,
             args.bc_weight, args.bc_min_weight, args.bc_decay_episodes,
             args.demo_fraction, args.safety_outage_threshold,
+            args.teacher_anchor_weight,
+            args.teacher_action_blend,
         )
     model.save(last_path)
     # ``best.pth`` is the constraint-prioritised checkpoint. Keep an explicit
@@ -862,6 +930,8 @@ def run_algorithm(args, algorithm):
         "bc_weight_final": (
             float(result["bc_weight"][-1]) if result.get("bc_weight") else None
         ),
+        "teacher_anchor_weight": float(args.teacher_anchor_weight),
+        "teacher_action_blend": float(args.teacher_action_blend),
         "best_metrics": result["best_metrics"],
         "best_completion_metrics": result["best_completion_metrics"],
         "evaluations": result["evaluations"],
@@ -912,6 +982,8 @@ def main(argv=None):
     parser.add_argument("--bc-min-weight", type=float, default=0.25)
     parser.add_argument("--bc-decay-episodes", type=int, default=600)
     parser.add_argument("--demo-fraction", type=float, default=0.25)
+    parser.add_argument("--teacher-anchor-weight", type=float, default=0.0)
+    parser.add_argument("--teacher-action-blend", type=float, default=0.0)
     parser.add_argument("--actor-lr", type=float, default=1e-4)
     parser.add_argument("--critic-lr", type=float, default=1e-3)
     parser.add_argument("--safety-outage-threshold", type=float, default=0.2)
@@ -931,6 +1003,10 @@ def main(argv=None):
         parser.error("require 0 <= bc-min-weight <= bc-weight")
     if not (0.0 <= args.demo_fraction <= 1.0):
         parser.error("require 0 <= demo-fraction <= 1")
+    if args.teacher_anchor_weight < 0.0:
+        parser.error("teacher-anchor-weight must be non-negative")
+    if not 0.0 <= args.teacher_action_blend <= 1.0:
+        parser.error("teacher-action-blend must be in [0, 1]")
     if not (0.0 <= args.safety_outage_threshold <= 1.0):
         parser.error("require 0 <= safety-outage-threshold <= 1")
     if args.n_step <= 0 or args.action_repeat <= 0:

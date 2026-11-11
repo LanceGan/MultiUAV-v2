@@ -156,6 +156,8 @@ class ExclusiveSectorFixedRouteEnv:
         self.sector_conflicts = 0
         self.safety_projections = 0
         self.last_safety_projections = 0
+        self.upload_guard_projections = 0
+        self.last_upload_guard_projections = 0
         self.stall_steps = np.zeros(self.n_uav, dtype=int)
         self.max_stall_steps = np.zeros(self.n_uav, dtype=int)
 
@@ -310,18 +312,24 @@ class ExclusiveSectorFixedRouteEnv:
         # Variant-A action parameterisation.
         return np.asarray([speed, 0.0], dtype=np.float32)
 
-    def project_safe_actions(self, actions, outage_threshold):
+    def project_safe_actions(self, actions, outage_threshold, *,
+                             update_stats=True):
         """Replace actions that would enter a position without a reliable sector.
 
         This is a one-step look-ahead safety projection.  It uses the same
         MapGuide action as the teacher fallback and is not part of the learned
         reward or action space.
+
+        ``update_stats=False`` is used to derive safe teacher targets without
+        counting the same projection twice.  The executed action still uses the
+        default ``update_stats=True`` call.
         """
         actions = np.asarray(actions, dtype=float).reshape(self.n_uav, 2).copy()
         threshold = float(outage_threshold)
         if not 0.0 <= threshold <= 1.0:
             raise ValueError("outage_threshold must be in [0, 1]")
-        self.last_safety_projections = 0
+        projections = 0
+        upload_guards = 0
         for i in range(self.n_uav):
             if self.done[i]:
                 continue
@@ -340,14 +348,32 @@ class ExclusiveSectorFixedRouteEnv:
                 [0.0, 0.0],
                 [self.scenario.length_m, self.scenario.width_m],
             )
+            guard_upload = False
+            if self.buffers[i] > 1e-9 and self._target_kind(i)[0] != "done":
+                _, task = self._target_kind(i)
+                anchor = (
+                    self.task_positions[task]
+                    if task is not None else self.terminal
+                )
+                guard_upload = self._segment_enters_disk(
+                    self.positions[i], anchor, clipped, self.arrival_radius
+                )
             sample = self.field.sample(clipped)
             if (
+                guard_upload
+                or
                 np.linalg.norm(intended - clipped) > 1e-9
                 or not np.any(sample.g2a_outage <= threshold)
             ):
                 actions[i] = self.guide_action(i)
-                self.last_safety_projections += 1
-        self.safety_projections += self.last_safety_projections
+                projections += 1
+                if guard_upload:
+                    upload_guards += 1
+        if update_stats:
+            self.last_safety_projections = projections
+            self.safety_projections += projections
+            self.last_upload_guard_projections = upload_guards
+            self.upload_guard_projections += upload_guards
         return np.clip(actions, self.action_low, self.action_high)
 
     def observations(self):
@@ -682,6 +708,9 @@ class ExclusiveSectorFixedRouteEnv:
             "early_terminal_arrivals": int(self.early_terminal_arrivals),
             "sector_conflicts": int(self.sector_conflicts),
             "safety_projections": int(self.last_safety_projections),
+            "upload_guard_projections": int(
+                self.last_upload_guard_projections
+            ),
             "reward_terms": {
                 k: v.copy() for k, v in self.reward_term_last.items()
             },
@@ -755,6 +784,7 @@ class ExclusiveSectorFixedRouteEnv:
             "out_of_bounds": int(self.out_of_bounds),
             "sector_conflicts": int(self.sector_conflicts),
             "safety_projections": int(self.safety_projections),
+            "upload_guard_projections": int(self.upload_guard_projections),
             "terminal_distances_m": terminal_distances,
             "completion_step": self.completion_step.tolist(),
             "max_stall_steps": self.max_stall_steps.tolist(),

@@ -113,32 +113,52 @@ Supplementary negative results:
 
 ## 4. Formal Training Configuration
 
+> 2026-11-11 repair: the unstable SharedTD3-BC and MAPPO arms now use the
+> teacher-anchored variants defined in
+> [`teacher-anchored-marl.md`](teacher-anchored-marl.md). Their formal budget is
+> 3,000 episodes. They must be reported as TA-SharedTD3-BC and TA-MAPPO, not as
+> the original algorithms.
+
 All learned formal methods use:
 
 ```text
-episodes: 10,000 additional episodes
 horizon: 2,000 steps
 map-guide probability: 0.5 constant
 safety outage threshold: 0.2
 outage constraint: 20 s per UAV
 evaluation: deterministic, teacher episodes disabled
 checkpoints: best_constraint.pth and best_completion.pth
+episodes: MA-D3QN uses the existing early-stop protocol;
+          TA-SharedTD3-BC and TA-MAPPO use 3,000
 ```
 
-SharedTD3-BC:
+TA-SharedTD3-BC:
 
 ```text
-BC weight: 1.0 -> 0.25 over 600 episodes
-demo fraction: 0.25
+BC weight: 1.0 fixed
+demo fraction: 0.5
+teacher anchor weight: 10.0
+teacher action blend: 0.5
 actor learning rate: 1e-5
 critic learning rate: 1e-3
 ```
 
-MAPPO:
+TA-MAPPO:
 
 ```text
+teacher anchor weight: 10.0
+teacher action blend: 0.5
 actor learning rate: 1e-4
 critic learning rate: 1e-3
+```
+
+Teacher-anchored repair:
+
+```text
+teacher anchor weight: 10.0
+teacher action blend: 0.5
+upload guard: enabled
+evaluation: MapGuide disabled; teacher residual + safety + upload projections retained
 ```
 
 MA-D3QN:
@@ -173,6 +193,8 @@ collision, boundary, and per-UAV contiguous-outage checks.
 | SharedTD3-BC | `short-v15-u2-s42-sharedtd3bc-safe020-e200-s2000` | `best_constraint.pth` |
 | MAPPO | `short-v18-mappo-safe-e200-s2000` | `best_constraint.pth` |
 | MA-D3QN | `diag-v17b-ma-d3qn-repaired-e200-s2000` | `best_constraint.pth` |
+| TA-SharedTD3-BC | `teacher-anchor-v8-sharedtd3bc-u2-s42-e100-s2000` | 11/11 feasible |
+| TA-MAPPO | `teacher-anchor-v8-mappo-u2-s42-e100-s2000` | 11/11 feasible |
 
 The short runs are acceptance artifacts and warm starts, not final paper
 results.
@@ -196,10 +218,10 @@ Mac must not retune the formal learned methods after Windows training starts.
 
 ## 8. Windows Responsibilities
 
-Windows is responsible for all learned formal training:
+Windows is responsible for the remaining learned formal training:
 
-- SharedTD3-BC;
-- MAPPO;
+- TA-SharedTD3-BC;
+- TA-MAPPO;
 - MA-D3QN;
 - GATSAC-style training/replay where a learned checkpoint is required;
 - GG-MATD3-style supplemental negative reproduction.
@@ -215,6 +237,9 @@ Windows must:
 - report infeasible results rather than rerunning until a favorable result is
   found.
 
+The original standard SharedTD3-BC and MAPPO runs are retained as negative
+training-stability evidence. Do not continue training them.
+
 ## 9. Windows Commands
 
 From PowerShell after syncing the repository:
@@ -225,33 +250,36 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m pytest tests/test_td3_bc.py tests/test_ma_d3qn.py tests/test_exclusive_marl_pilot.py tests/stc/test_exclusive_e2e_env.py -q
 ```
 
-SharedTD3-BC:
+TA-SharedTD3-BC:
 
 ```powershell
 .\.venv\Scripts\python.exe experiment\run_exclusive_marl_pilot.py `
-  --algorithm SharedTD3 --episodes 10000 --horizon-steps 2000 `
+  --algorithm SharedTD3 --episodes 3000 --horizon-steps 2000 `
   --eval-interval 50 --guide-prob 0.5 --guide-min-prob 0.5 `
-  --bc-weight 1.0 --bc-min-weight 0.25 --bc-decay-episodes 600 `
-  --demo-fraction 0.25 --actor-lr 1e-5 --critic-lr 1e-3 `
+  --bc-weight 1.0 --bc-min-weight 1.0 --bc-decay-episodes 600 `
+  --demo-fraction 0.5 --teacher-anchor-weight 10.0 `
+  --teacher-action-blend 0.5 `
+  --actor-lr 1e-5 --critic-lr 1e-3 `
   --safety-outage-threshold 0.2 `
   --init-checkpoint results\runs_short_v15\short-v15-u2-s42-sharedtd3bc-safe020-e200-s2000\best_constraint.pth `
   --routes-json configs\exclusive\u2_s42_4d_ga_routes.json `
   --run-root results\formal_win `
-  --run-id win-formal-u2-s42-sharedtd3bc
+  --run-id win-formal-u2-s42-sharedtd3bc-ta
 ```
 
-MAPPO:
+TA-MAPPO:
 
 ```powershell
 .\.venv\Scripts\python.exe experiment\run_exclusive_marl_pilot.py `
-  --algorithm MAPPO --episodes 10000 --horizon-steps 2000 `
+  --algorithm MAPPO --episodes 3000 --horizon-steps 2000 `
   --eval-interval 50 --guide-prob 0.5 --guide-min-prob 0.5 `
+  --teacher-anchor-weight 10.0 --teacher-action-blend 0.5 `
   --actor-lr 1e-4 --critic-lr 1e-3 `
   --safety-outage-threshold 0.2 `
   --init-checkpoint results\runs_short_v18\short-v18-mappo-safe-e200-s2000\best_constraint.pth `
   --routes-json configs\exclusive\u2_s42_4d_ga_routes.json `
   --run-root results\formal_win `
-  --run-id win-formal-u2-s42-mappo
+  --run-id win-formal-u2-s42-mappo-ta
 ```
 
 MA-D3QN:

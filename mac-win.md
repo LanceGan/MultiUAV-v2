@@ -2,14 +2,14 @@
 
 > 读者：Windows 机器上的开发者/协作 agent。本文档是两台机器分工的**权威契约**，
 > 由 Mac 侧维护（分支 `feat/mac`）；Windows 侧在 `feat/win` 上工作。
-> 更新时间：2026-11-04。
+> 更新时间：2026-11-11。
 
 ## 1. 机器与分支
 
 | 机器 | 平台 | 分支 | 角色 |
 |---|---|---|---|
 | Mac（参考机） | macOS 15.7 arm64, Apple Silicon | `feat/mac` | 执行全部正式实验（U=2/3/4 及其补充）；文档主干 |
-| Windows 新机 | Windows 11, i5-12500H（4P+8E 12 核） | `feat/win` | **只负责论文写作**，不再启动或补充正式实验 |
+| Windows 新机 | Windows 11, i5-12500H（4P+8E 12 核） | `feat/win` | 论文写作 + 指定的 U=2 teacher-anchored MADRL 正式训练 |
 
 两分支**互不合并、互不 rebase**，只向 `origin` 各自推送；汇合时机与方式由项目负责人决定。
 
@@ -89,3 +89,15 @@ three-scene evidence，将 U=3/U=4 解释为 single-seed scalability probes。
   最新版；
 - Mac 侧的心跳监督不覆盖 Windows 机器——Windows 侧任务需自行监督并在推送时
   汇报状态。
+
+## 8. Teacher-anchored MADRL 正式训练交接（2026-11-11）
+
+Mac 已完成 TA-SharedTD3-BC 和 TA-MAPPO 的 100 集稳定性短测，两者均为
+11/11 次确定性评估可行。Windows 按
+[`docs/teacher-anchored-marl.md`](docs/teacher-anchored-marl.md) 的固定命令执行：
+
+- `win-formal-u2-s42-sharedtd3bc-ta`
+- `win-formal-u2-s42-mappo-ta`
+
+正式预算均为 3000 集、seed 42、horizon 2000、eval interval 50。不得恢复
+旧标准版本参数，也不得把一个正式 run 的结果与 Mac 短测混入同一统计族。

@@ -190,6 +190,32 @@ def test_early_arrival_and_invalid_stall_have_explicit_negative_terms():
     assert env.max_stall_steps[0] > 20
 
 
+def test_upload_guard_prevents_entering_next_service_disk_with_buffer():
+    env = ExclusiveSectorFixedRouteEnv(
+        _scenario(n_uav=1, task_positions=((10.0, 0.0), (50.0, 0.0))),
+        _FlatField(),
+        {0: [0, 1]},
+    )
+    env.positions[0] = np.asarray([0.1, 0.0])
+    env.step([[0.0, 0.0]])
+    assert env.buffers[0] > 0.0
+
+    env.positions[0] = np.asarray([35.0, 0.0])
+    guide_delta = env.guide_target(0) - env.positions[0]
+    guide_bearing = np.arctan2(guide_delta[1], guide_delta[0])
+    guarded = env.project_safe_actions(
+        [[50.0, -float(guide_bearing)]], 0.2
+    )
+    np.testing.assert_allclose(guarded[0], env.guide_action(0))
+    assert env.last_upload_guard_projections == 1
+
+    env.last_upload_guard_projections = 0
+    env.project_safe_actions(
+        [[50.0, -float(guide_bearing)]], 0.2, update_stats=False
+    )
+    assert env.last_upload_guard_projections == 0
+
+
 def test_feasibility_uses_maximum_contiguous_outage_not_average_ratio():
     env = ExclusiveSectorFixedRouteEnv(
         _scenario(n_uav=1, task_positions=((200.0, 0.0),)),

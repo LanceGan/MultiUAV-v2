@@ -19,12 +19,12 @@ def linear_decay(initial, episode, horizon, floor=0.0):
 
 
 def behavior_cloning_loss(predicted, target, demo_mask, max_speed):
-    """Masked BC loss on relative heading and speed."""
+    """Masked BC loss on the environment's ``[speed, relative_heading]`` action."""
     count = demo_mask.sum()
     if float(count.item()) == 0.0:
         return predicted.sum() * 0.0
-    heading = 1.0 - torch.cos(predicted[:, :1] - target[:, :1])
-    speed = ((predicted[:, 1:2] - target[:, 1:2]) / max(float(max_speed), 1e-9)) ** 2
+    speed = ((predicted[:, :1] - target[:, :1]) / max(float(max_speed), 1e-9)) ** 2
+    heading = 1.0 - torch.cos(predicted[:, 1:2] - target[:, 1:2])
     return ((heading + speed) * demo_mask).sum() / count
 
 
@@ -44,12 +44,16 @@ class DemoReplayBuffer:
 
         self.state = np.zeros((self.max_size, state_dim), dtype=np.float32)
         self.action = np.zeros((self.max_size, action_dim), dtype=np.float32)
+        self.teacher_action = np.zeros((self.max_size, action_dim), dtype=np.float32)
         self.reward = np.zeros((self.max_size, 1), dtype=np.float32)
         self.next_state = np.zeros((self.max_size, state_dim), dtype=np.float32)
         self.done = np.zeros((self.max_size, 1), dtype=np.float32)
 
         self.demo_state = np.zeros((self.max_size, state_dim), dtype=np.float32)
         self.demo_action = np.zeros((self.max_size, action_dim), dtype=np.float32)
+        self.demo_teacher_action = np.zeros(
+            (self.max_size, action_dim), dtype=np.float32
+        )
         self.demo_reward = np.zeros((self.max_size, 1), dtype=np.float32)
         self.demo_next_state = np.zeros((self.max_size, state_dim), dtype=np.float32)
         self.demo_done = np.zeros((self.max_size, 1), dtype=np.float32)
@@ -58,10 +62,26 @@ class DemoReplayBuffer:
     def total_size(self):
         return self.size + self.demo_size
 
-    def add(self, state, action, reward, next_state, done, demo=False):
+    def add(self, state, action, reward, next_state, done, demo=False,
+            teacher_action=None):
+        """Add one transition.
+
+        ``teacher_action`` is the fixed MapGuide action for the same state.
+        It is stored separately from the executed action so the persistent
+        teacher-anchor loss can regularise online as well as demonstration
+        samples.  Legacy callers that omit it fall back to ``action``.
+        """
+        if teacher_action is None:
+            teacher_action = action
         arrays = (
-            ("demo_state", "demo_action", "demo_reward", "demo_next_state", "demo_done")
-            if demo else ("state", "action", "reward", "next_state", "done")
+            (
+                "demo_state", "demo_action", "demo_teacher_action",
+                "demo_reward", "demo_next_state", "demo_done",
+            )
+            if demo else (
+                "state", "action", "teacher_action",
+                "reward", "next_state", "done",
+            )
         )
         if demo:
             index = self.demo_ptr
@@ -73,9 +93,12 @@ class DemoReplayBuffer:
             self.size = min(self.size + 1, self.max_size)
         getattr(self, arrays[0])[index] = np.asarray(state, dtype=np.float32)
         getattr(self, arrays[1])[index] = np.asarray(action, dtype=np.float32)
-        getattr(self, arrays[2])[index] = float(reward)
-        getattr(self, arrays[3])[index] = np.asarray(next_state, dtype=np.float32)
-        getattr(self, arrays[4])[index] = float(done)
+        getattr(self, arrays[2])[index] = np.asarray(
+            teacher_action, dtype=np.float32
+        )
+        getattr(self, arrays[3])[index] = float(reward)
+        getattr(self, arrays[4])[index] = np.asarray(next_state, dtype=np.float32)
+        getattr(self, arrays[5])[index] = float(done)
 
     def __len__(self):
         return self.total_size
@@ -102,6 +125,10 @@ class DemoReplayBuffer:
         )
         state = np.concatenate((self.state[online_idx], self.demo_state[demo_idx]), axis=0)
         action = np.concatenate((self.action[online_idx], self.demo_action[demo_idx]), axis=0)
+        teacher_action = np.concatenate((
+            self.teacher_action[online_idx],
+            self.demo_teacher_action[demo_idx],
+        ), axis=0)
         reward = np.concatenate((self.reward[online_idx], self.demo_reward[demo_idx]), axis=0)
         next_state = np.concatenate(
             (self.next_state[online_idx], self.demo_next_state[demo_idx]), axis=0
@@ -113,7 +140,9 @@ class DemoReplayBuffer:
         ), axis=0)
 
         permutation = np.random.permutation(batch_size)
-        arrays = (state, action, reward, next_state, done, demo_mask)
+        arrays = (
+            state, action, teacher_action, reward, next_state, done, demo_mask
+        )
         arrays = tuple(array[permutation] for array in arrays)
         return tuple(
             torch.tensor(array, dtype=torch.float32, device=td3.device)
@@ -124,15 +153,19 @@ class DemoReplayBuffer:
 class SharedTD3BC(SharedTD3):
     """Parameter-shared TD3 whose actor update includes masked BC regularization."""
 
-    def __init__(self, *args, bc_weight=1.0, **kwargs):
+    def __init__(self, *args, bc_weight=1.0, teacher_anchor_weight=0.0,
+                 **kwargs):
         super().__init__(*args, **kwargs)
         self.bc_weight = float(bc_weight)
+        self.teacher_anchor_weight = float(teacher_anchor_weight)
+        if self.teacher_anchor_weight < 0.0:
+            raise ValueError("teacher_anchor_weight must be non-negative")
         self.last_bc_loss = 0.0
+        self.last_teacher_loss = 0.0
 
     def train(self, replay_buffer):
-        state, action, reward, next_state, done, demo_mask = replay_buffer.sample(
-            self.batch_size
-        )
+        (state, action, teacher_action, reward, next_state, done,
+         demo_mask) = replay_buffer.sample(self.batch_size)
 
         with torch.no_grad():
             noise = torch.clamp(
@@ -162,6 +195,7 @@ class SharedTD3BC(SharedTD3):
         self._update_counter += 1
         actor_loss = None
         bc_loss = 0.0
+        teacher_loss = 0.0
         if self._update_counter % self.policy_update_delay == 0:
             predicted = self.actor(state)
             q_term = -self.critic.Q1(state, predicted).mean()
@@ -169,13 +203,24 @@ class SharedTD3BC(SharedTD3):
                 predicted, action, demo_mask,
                 self.max_action[0].detach().cpu().item(),
             )
-            actor_loss = q_term + self.bc_weight * bc_term
+            teacher_mask = torch.ones_like(demo_mask)
+            teacher_term = behavior_cloning_loss(
+                predicted, teacher_action, teacher_mask,
+                self.max_action[0].detach().cpu().item(),
+            )
+            actor_loss = (
+                q_term
+                + self.bc_weight * bc_term
+                + self.teacher_anchor_weight * teacher_term
+            )
             self.actor_optimizer.zero_grad()
             actor_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
             self.actor_optimizer.step()
             bc_loss = float(bc_term.detach().cpu().item())
+            teacher_loss = float(teacher_term.detach().cpu().item())
             self.last_bc_loss = bc_loss
+            self.last_teacher_loss = teacher_loss
 
             for param, target_param in zip(
                 self.critic.parameters(), self.critic_target.parameters()
@@ -197,4 +242,5 @@ class SharedTD3BC(SharedTD3):
                 if actor_loss is not None else None
             ),
             "bc_loss": float(bc_loss),
+            "teacher_loss": float(teacher_loss),
         }

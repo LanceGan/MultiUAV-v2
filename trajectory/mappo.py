@@ -116,13 +116,17 @@ class _RolloutBuffer(object):
         self.next_global_states = np.zeros((c, self.global_dim), np.float32)
         self.obs = np.zeros((c, self.n_agents, self.local_state_dim), np.float32)
         self.actions = np.zeros((c, self.n_agents, self.action_dim), np.float32)
+        self.teacher_actions = np.zeros(
+            (c, self.n_agents, self.action_dim), np.float32
+        )
         self.log_probs = np.zeros((c, self.n_agents), np.float32)
         self.rewards = np.zeros((c,), np.float32)
         self.values = np.zeros((c,), np.float32)
         self.dones = np.zeros((c,), np.float32)
         self.idx = 0
 
-    def store(self, obs_list, actions, log_probs, reward, value, done, next_obs_list):
+    def store(self, obs_list, actions, log_probs, reward, value, done,
+              next_obs_list, teacher_actions=None):
         i = self.idx
         self.global_states[i] = np.concatenate(
             [np.asarray(o, np.float32).reshape(-1) for o in obs_list])
@@ -131,6 +135,10 @@ class _RolloutBuffer(object):
         for j in range(self.n_agents):
             self.obs[i, j] = np.asarray(obs_list[j], np.float32)
             self.actions[i, j] = np.asarray(actions[j], np.float32)
+            if teacher_actions is not None:
+                self.teacher_actions[i, j] = np.asarray(
+                    teacher_actions[j], np.float32
+                )
             self.log_probs[i, j] = float(log_probs[j])
         self.rewards[i] = float(reward)
         self.values[i] = float(value)
@@ -151,7 +159,8 @@ class MAPPO(object):
                  min_action=None, net_width=256, critic_width=512, a_lr=1e-4,
                  c_lr=1e-3, gamma=0.99, batch_size=256, clip_ratio=0.2,
                  epochs=10, gae_lambda=0.95, entropy_coef=0.01,
-                 max_grad_norm=0.5, rollout_steps=2048, std_init_frac=0.15):
+                 max_grad_norm=0.5, rollout_steps=2048, std_init_frac=0.15,
+                 teacher_weight=0.0):
         self.n_agents = int(n_agents)
         self.local_state_dim = int(local_state_dim)
         self.action_dim = int(action_dim)
@@ -164,6 +173,9 @@ class MAPPO(object):
         self.entropy_coef = float(entropy_coef)
         self.max_grad_norm = float(max_grad_norm)
         self.rollout_steps = int(rollout_steps)
+        self.teacher_weight = float(teacher_weight)
+        if self.teacher_weight < 0.0:
+            raise ValueError("teacher_weight must be non-negative")
 
         max_action = _to_tensor(max_action)
         min_action = (torch.zeros_like(max_action) if min_action is None
@@ -284,12 +296,18 @@ class MAPPO(object):
 
         obs = _to_tensor(buffer.obs[:T])             # (T, n, local_dim)
         actions = _to_tensor(buffer.actions[:T])     # (T, n, action_dim)
+        teacher_actions = _to_tensor(buffer.teacher_actions[:T])
         old_log_probs = _to_tensor(buffer.log_probs[:T])  # (T, n)
         adv_t = _to_tensor(advantages)               # (T,)
         ret_t = _to_tensor(returns)                  # (T,)
         gs = _to_tensor(buffer.global_states[:T])    # (T, global_dim)
 
-        stats = {"critic_loss": 0.0, "actor_loss": 0.0, "entropy": 0.0}
+        stats = {
+            "critic_loss": 0.0,
+            "actor_loss": 0.0,
+            "teacher_loss": 0.0,
+            "entropy": 0.0,
+        }
         n_updates = 0
         for _ in range(self.epochs):
             perm = np.random.permutation(T)
@@ -307,6 +325,7 @@ class MAPPO(object):
                 # --- independent actors: clipped PPO ratio + entropy ---
                 actor_losses = []
                 entropies = []
+                teacher_losses = []
                 for i in range(self.n_agents):
                     mean, std = self.actors[i](obs[idx, i])
                     dist = Normal(mean, std)
@@ -319,8 +338,20 @@ class MAPPO(object):
                     surr2 = torch.clamp(
                         ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio) * a
                     entropy = dist.entropy().sum(-1).mean()
+                    # Anchor the deterministic mean, not only the Gaussian
+                    # likelihood: a large learnable std can otherwise hide a
+                    # drifting mean inside a high-likelihood distribution.
+                    teacher_delta = mean - teacher_actions[idx, i]
+                    teacher_heading = 1.0 - torch.cos(teacher_delta[:, 1])
+                    teacher_speed = (
+                        teacher_delta[:, 0] / torch.clamp(self.max_action[0], min=1e-9)
+                    ) ** 2
+                    teacher_loss = (teacher_heading + teacher_speed).mean()
                     actor_loss = (-torch.min(surr1, surr2).mean()
                                   - self.entropy_coef * entropy)
+                    actor_loss = (
+                        actor_loss + self.teacher_weight * teacher_loss
+                    )
                     self.actor_optimizers[i].zero_grad()
                     actor_loss.backward()
                     nn.utils.clip_grad_norm_(
@@ -328,9 +359,11 @@ class MAPPO(object):
                     self.actor_optimizers[i].step()
                     actor_losses.append(float(actor_loss.item()))
                     entropies.append(float(entropy.item()))
+                    teacher_losses.append(float(teacher_loss.item()))
 
                 stats["critic_loss"] += float(critic_loss.item())
                 stats["actor_loss"] += float(np.mean(actor_losses))
+                stats["teacher_loss"] += float(np.mean(teacher_losses))
                 stats["entropy"] += float(np.mean(entropies))
                 n_updates += 1
 

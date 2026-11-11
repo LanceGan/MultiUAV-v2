@@ -29,6 +29,16 @@ def test_behavior_cloning_loss_masks_online_samples():
     assert np.isclose(float(loss), expected)
 
 
+def test_behavior_cloning_loss_uses_speed_then_heading_order():
+    predicted = torch.tensor([[1.0, 0.0]])
+    target = torch.tensor([[3.0, 0.5]])
+    mask = torch.ones((1, 1))
+
+    loss = behavior_cloning_loss(predicted, target, mask, max_speed=10.0)
+    expected = ((1.0 - 3.0) / 10.0) ** 2 + (1.0 - np.cos(-0.5))
+    assert np.isclose(float(loss), expected)
+
+
 def test_demo_replay_keeps_fixed_demo_fraction():
     buffer = DemoReplayBuffer(3, 2, max_size=64, demo_fraction=0.25)
     for index in range(8):
@@ -51,7 +61,7 @@ def test_demo_replay_keeps_fixed_demo_fraction():
             demo=True,
         )
 
-    _, _, _, _, _, demo_mask = buffer.sample(32)
+    _, _, _, _, _, _, demo_mask = buffer.sample(32)
     assert int(demo_mask.sum().item()) == 8
 
 
@@ -71,6 +81,7 @@ def test_shared_td3_bc_train_uses_demo_replay():
         np.asarray([1.0, np.pi], dtype=np.float32),
         np.asarray([0.0, -np.pi], dtype=np.float32),
         batch_size=16,
+        teacher_anchor_weight=1.0,
     )
     model.bc_weight = 1.0
     model.train(buffer)
@@ -79,3 +90,18 @@ def test_shared_td3_bc_train_uses_demo_replay():
     assert np.isfinite(result["critic_loss"])
     assert np.isfinite(result["bc_loss"])
     assert result["bc_loss"] >= 0.0
+    assert np.isfinite(result["teacher_loss"])
+    assert result["teacher_loss"] >= 0.0
+
+
+def test_demo_replay_preserves_teacher_action_for_online_samples():
+    buffer = DemoReplayBuffer(2, 2, max_size=16, demo_fraction=0.0)
+    state = np.asarray([0.1, 0.2], dtype=float)
+    executed = np.asarray([1.0, 0.4], dtype=float)
+    teacher = np.asarray([0.2, -0.1], dtype=float)
+    buffer.add(state, executed, 0.0, state, False, teacher_action=teacher)
+
+    _, action, teacher_action, _, _, _, demo_mask = buffer.sample(1)
+    np.testing.assert_allclose(action.numpy()[0], executed)
+    np.testing.assert_allclose(teacher_action.numpy()[0], teacher)
+    assert int(demo_mask.sum().item()) == 0
