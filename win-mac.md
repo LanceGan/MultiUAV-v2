@@ -9,20 +9,20 @@
 
 - TA-SharedTD3-BC：`win-formal-u2-s42-sharedtd3bc-ta`（3000 集）
 - TA-MAPPO：`win-formal-u2-s42-mappo-ta`（3000 集）
-- MA-D3QN（原始 10000 集正式训练，继续运行）
+
+MA-D3QN 已取消（Mac 侧 MA-D3QN 即将跑完，避免跨机重复，以 Mac 结果为准）。
 
 ## 2. 训练状态（2026-11-11）
 
 | 方法 | 状态 | 预算 | 备注 |
 |---|---|---|---|
-| MA-D3QN | 运行中 | 10000 集 | ep 5300/10000（53%），仍 20/20；eval 间歇 feasible |
-| TA-SharedTD3-BC | 运行中 | 3000 集 | ep 1 feasible=True，warm-start 加载成功 |
-| TA-MAPPO | 运行中 | 3000 集 | ep 1 feasible=True，warm-start 加载成功 |
+| TA-SharedTD3-BC | 运行中 | 3000 集 | ep 150/3000，20/20，eval_feasible 连续 True |
+| TA-MAPPO | 运行中 | 3000 集 | ep 200/3000，20/20，eval_feasible 间歇 True |
+| MA-D3QN | 已取消 | 10000 集 | ep 5500 时停止，Mac 侧为准 |
 
 ## 3. 旧标准版结果（已作废）
 
-旧 SharedTD3-BC（2100 集）与 MAPPO（4050 集）未学会、已停止，作为负结果留存于
-`results/formal_win/win-formal-u2-s42-{sharedtd3bc,mappo}`；
+旧 SharedTD3-BC（2100 集）与 MAPPO（4050 集）未学会、已停止，作为负结果留存；
 不得与新 TA 版混为同一方法。
 
 ## 4. 执行合规
