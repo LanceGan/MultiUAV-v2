@@ -116,3 +116,19 @@ Windows 按 [`docs/ma-d3qn-scale-handoff.md`](docs/ma-d3qn-scale-handoff.md)
 
 两个 run 均从零训练，3000 集、seed 42、horizon 2000。不得加载 U=2
 checkpoint，也不得增加 method seed。
+
+## 10. TA 方法 U=3/U=4 规模探针（2026-11-12）
+
+TA-SharedTD3-BC 与 TA-MAPPO 的 U=2 正式结果均已通过验收，现放行 U=3/U=4
+single-seed scale probes。固定命令和验收口径见
+[`docs/teacher-anchored-scale-handoff.md`](docs/teacher-anchored-scale-handoff.md)。
+
+运行 ID：
+
+- `win-formal-u3-s42-sharedtd3bc-ta`
+- `win-formal-u3-s42-mappo-ta`
+- `win-formal-u4-s42-sharedtd3bc-ta`
+- `win-formal-u4-s42-mappo-ta`
+
+四个 run 均从零训练，不加载 U=2 checkpoint。建议先并行运行两个 U=3 任务，
+再按完成情况启动对应 U=4 任务，保持最多两个训练进程。
