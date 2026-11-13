@@ -1,0 +1,286 @@
+{
+  "figure_claim": "The deterministic U=3 best checkpoints complete all tasks and uploads but remain infeasible due to collisions and outage.",
+  "runs": {
+    "sharedtd3": {
+      "run_id": "win-formal-u3-s42-sharedtd3bc-ta",
+      "analysis_sha256": "ae5b54354b512e98100fd227c480fcbb5d93856fc19a2197255020234bda027f",
+      "summary_sha256": "abeca83ba33d8cf6a8fe69ee1d12ce7ba3c395b66ecebe4e5fcf70281f1c428b",
+      "best_metrics": {
+        "feasible": false,
+        "failure_reasons": [
+          "collision",
+          "contiguous_outage_excess"
+        ],
+        "makespan_s": 745.5,
+        "total_delay_s": 935.5,
+        "delay_count": 30,
+        "visited_tasks": 30,
+        "uploaded_tasks": 30,
+        "unserved_tasks": 0,
+        "unfinished_uploads": 0,
+        "outage_ratio": [
+          0.23953613299155754,
+          0.14711901438043593,
+          0.43430675493031046
+        ],
+        "max_outage_ratio": 0.43430675493031046,
+        "total_expected_outage_s": [
+          178.57418714520614,
+          52.74216665538628,
+          141.1496953523509
+        ],
+        "max_contiguous_outage_s": [
+          37.5,
+          10.5,
+          52.5
+        ],
+        "outage_max_s": 20.0,
+        "outage_probability_threshold": 0.5,
+        "early_service_arrivals": 0,
+        "early_terminal_arrivals": 0,
+        "collisions": 5,
+        "out_of_bounds": 0,
+        "sector_conflicts": 0,
+        "safety_projections": 1088,
+        "upload_guard_projections": 3,
+        "terminal_distances_m": [
+          0.9999999754225323,
+          0.9999998514386036,
+          0.9999999864228986
+        ],
+        "completion_step": [
+          1491,
+          717,
+          650
+        ],
+        "max_stall_steps": [
+          0,
+          0,
+          0
+        ],
+        "energy_j": [
+          610005.7842651377,
+          380278.23935700103,
+          341900.4032915035
+        ],
+        "reward_term_totals": {
+          "time": [
+            -1.4909999999999466,
+            -0.7170000000000005,
+            -0.6500000000000005
+          ],
+          "progress": [
+            1.7488862413552697,
+            1.1553798778207194,
+            1.0401248488122457
+          ],
+          "guide_alignment": [
+            0.7004935434563836,
+            0.3579968394122833,
+            0.28449652371329004
+          ],
+          "boundary": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "collision": [
+            -0.2416758572360216,
+            -0.10006490766587367,
+            -0.34174076490189526
+          ],
+          "upload": [
+            0.3038071535030015,
+            0.31243574167935206,
+            0.34156816110478905
+          ],
+          "outage": [
+            -7.142967485808218,
+            -2.1096866662154494,
+            -5.6459878140940365
+          ],
+          "service": [
+            10.0,
+            10.0,
+            10.0
+          ],
+          "terminal": [
+            10.0,
+            10.0,
+            10.0
+          ],
+          "early_arrival": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "invalid_stall": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "qos_risk": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "qos": [
+            -10.0,
+            0.0,
+            -10.0
+          ],
+          "energy": [
+            -0.06100057842651325,
+            -0.03802782393570013,
+            -0.03419004032915056
+          ]
+        },
+        "steps": 1491,
+        "return": 27.671846992244504,
+        "remaining_distance_m": 0.0
+      }
+    },
+    "mappo": {
+      "run_id": "win-formal-u3-s42-mappo-ta",
+      "analysis_sha256": "b6d64c48320b128fb68a8d79d66b2e66e36142250a171ffebfb3cecb0e3b93d1",
+      "summary_sha256": "cb0f3679b33164dea9562293313c297b55a80286749fbf6baecc33907ff1705c",
+      "best_metrics": {
+        "feasible": false,
+        "failure_reasons": [
+          "collision",
+          "contiguous_outage_excess"
+        ],
+        "makespan_s": 748.0,
+        "total_delay_s": 936.0,
+        "delay_count": 30,
+        "visited_tasks": 30,
+        "uploaded_tasks": 30,
+        "unserved_tasks": 0,
+        "unfinished_uploads": 0,
+        "outage_ratio": [
+          0.23845488163158338,
+          0.14643249239235417,
+          0.4311331454316844
+        ],
+        "max_outage_ratio": 0.4311331454316844,
+        "total_expected_outage_s": [
+          178.36425146042436,
+          53.374643477013095,
+          140.54940541072912
+        ],
+        "max_contiguous_outage_s": [
+          37.5,
+          10.5,
+          52.0
+        ],
+        "outage_max_s": 20.0,
+        "outage_probability_threshold": 0.5,
+        "early_service_arrivals": 0,
+        "early_terminal_arrivals": 0,
+        "collisions": 5,
+        "out_of_bounds": 0,
+        "sector_conflicts": 0,
+        "safety_projections": 1081,
+        "upload_guard_projections": 0,
+        "terminal_distances_m": [
+          1.0000000283774266,
+          1.00000021307572,
+          5.052285490259333
+        ],
+        "completion_step": [
+          1496,
+          729,
+          652
+        ],
+        "max_stall_steps": [
+          0,
+          0,
+          0
+        ],
+        "energy_j": [
+          602161.0269499599,
+          366981.3203408009,
+          334182.8025954373
+        ],
+        "reward_term_totals": {
+          "time": [
+            -1.495999999999946,
+            -0.7290000000000005,
+            -0.6520000000000005
+          ],
+          "progress": [
+            1.749073496482904,
+            1.1562836548270392,
+            1.0367460390546872
+          ],
+          "guide_alignment": [
+            0.7049522960524965,
+            0.36443163270192785,
+            0.28599594051621
+          ],
+          "boundary": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "collision": [
+            -0.24449154714728194,
+            -0.101725286530459,
+            -0.3462168336777409
+          ],
+          "upload": [
+            0.3038071535030013,
+            0.312435741679352,
+            0.34156816110478855
+          ],
+          "outage": [
+            -7.1345700584169895,
+            -2.1349857390805242,
+            -5.621976216429152
+          ],
+          "service": [
+            10.0,
+            10.0,
+            10.0
+          ],
+          "terminal": [
+            10.0,
+            10.0,
+            10.0
+          ],
+          "early_arrival": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "invalid_stall": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "qos_risk": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "qos": [
+            -10.0,
+            0.0,
+            -10.0
+          ],
+          "energy": [
+            -0.06021610269499545,
+            -0.036698132034080136,
+            -0.03341828025954394
+          ]
+        },
+        "steps": 1496,
+        "return": 27.663995919651654,
+        "remaining_distance_m": 0.0
+      }
+    }
+  },
+  "source_data": [
+    "u3_ta_trajectories.csv"
+  ]
+}

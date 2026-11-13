@@ -1,0 +1,301 @@
+{
+  "n_method_seeds": 5,
+  "method_seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "primary_test": "one-sided exact paired sign-flip test; H1 mean(removed-full)>0",
+  "multiplicity": "Holm correction across seven non-full arms",
+  "alpha": 0.05,
+  "rows": [
+    {
+      "ablation": "full",
+      "label": "Full STC-ALNS",
+      "n": 5,
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "objective_mean": 0.7443483291787765,
+      "objective_sd": 0.003392255079096083,
+      "paired_delta_mean": 0.0,
+      "paired_delta_sd": 0.0,
+      "paired_delta_ci95": [
+        0.0,
+        0.0
+      ],
+      "paired_deltas": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "worse_seeds": 0,
+      "better_seeds": 0,
+      "tied_seeds": 5,
+      "all_feasible": true,
+      "raw_p_one_sided": null,
+      "holm_p_one_sided": null
+    },
+    {
+      "ablation": "ebtas_init",
+      "label": "w/o EBTAS initialisation",
+      "n": 5,
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "objective_mean": 0.7443012091766393,
+      "objective_sd": 0.0017935109205596154,
+      "paired_delta_mean": -4.7120002137024386e-05,
+      "paired_delta_sd": 0.0031507308226942873,
+      "paired_delta_ci95": [
+        -0.0039592690327074475,
+        0.0038650290284333987
+      ],
+      "paired_deltas": [
+        0.003868883354784969,
+        -0.002995804160477844,
+        0.002406267625302494,
+        -0.003137486071966733,
+        -0.00037746075832800763
+      ],
+      "worse_seeds": 2,
+      "better_seeds": 3,
+      "tied_seeds": 0,
+      "all_feasible": true,
+      "raw_p_one_sided": 1.0,
+      "holm_p_one_sided": 1.0
+    },
+    {
+      "ablation": "multi_candidate",
+      "label": "w/o multi-candidate",
+      "n": 5,
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "objective_mean": 0.7393613569254642,
+      "objective_sd": 0.003943870186592446,
+      "paired_delta_mean": -0.004986972253312194,
+      "paired_delta_sd": 0.005288973950795299,
+      "paired_delta_ci95": [
+        -0.011554100795452243,
+        0.0015801562888278558
+      ],
+      "paired_deltas": [
+        -0.0016513461086464787,
+        -0.009105927831393301,
+        7.075153766733511e-05,
+        -0.012078207758033699,
+        -0.0021701311061548267
+      ],
+      "worse_seeds": 1,
+      "better_seeds": 4,
+      "tied_seeds": 0,
+      "all_feasible": true,
+      "raw_p_one_sided": 1.0,
+      "holm_p_one_sided": 1.0
+    },
+    {
+      "ablation": "hotspot_destroy",
+      "label": "w/o hotspot destroy",
+      "n": 5,
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "objective_mean": 0.7434944628110788,
+      "objective_sd": 0.006641203919763734,
+      "paired_delta_mean": -0.00085386636769762,
+      "paired_delta_sd": 0.008698254756698054,
+      "paired_delta_ci95": [
+        -0.011654176146294234,
+        0.009946443410898993
+      ],
+      "paired_deltas": [
+        0.0038924075886227483,
+        -0.005543753697269116,
+        0.012078565430342025,
+        -0.005543574861115008,
+        -0.009152976299068749
+      ],
+      "worse_seeds": 2,
+      "better_seeds": 3,
+      "tied_seeds": 0,
+      "all_feasible": true,
+      "raw_p_one_sided": 1.0,
+      "holm_p_one_sided": 1.0
+    },
+    {
+      "ablation": "conflict_repair",
+      "label": "w/o conflict-aware repair",
+      "n": 5,
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "objective_mean": 0.7575639817308699,
+      "objective_sd": 0.007485070508512068,
+      "paired_delta_mean": 0.013215652552093582,
+      "paired_delta_sd": 0.008254076601879101,
+      "paired_delta_ci95": [
+        0.002966862797124239,
+        0.023464442307062926
+      ],
+      "paired_deltas": [
+        0.026681198491329217,
+        0.013611753861337617,
+        0.01283348694699804,
+        0.00662926634073191,
+        0.006322557120071126
+      ],
+      "worse_seeds": 5,
+      "better_seeds": 0,
+      "tied_seeds": 0,
+      "all_feasible": true,
+      "raw_p_one_sided": 0.03125,
+      "holm_p_one_sided": 0.21875
+    },
+    {
+      "ablation": "path_switch",
+      "label": "w/o path switch",
+      "n": 5,
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "objective_mean": 0.7486749060575534,
+      "objective_sd": 0.007186116419939563,
+      "paired_delta_mean": 0.004326576878776955,
+      "paired_delta_sd": 0.008233966047747782,
+      "paired_delta_ci95": [
+        -0.005897242325143601,
+        0.014550396082697512
+      ],
+      "paired_deltas": [
+        -0.0016513461086464787,
+        -0.0071243482682483705,
+        0.011417919685191014,
+        0.01004957972721332,
+        0.008941079358375292
+      ],
+      "worse_seeds": 3,
+      "better_seeds": 2,
+      "tied_seeds": 0,
+      "all_feasible": true,
+      "raw_p_one_sided": 0.125,
+      "holm_p_one_sided": 0.75
+    },
+    {
+      "ablation": "adaptive_weights",
+      "label": "w/o adaptive weights",
+      "n": 5,
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "objective_mean": 0.7469952593338398,
+      "objective_sd": 0.00675000555938721,
+      "paired_delta_mean": 0.0026469301550635428,
+      "paired_delta_sd": 0.00796170219348055,
+      "paired_delta_ci95": [
+        -0.007238828823001196,
+        0.01253268913312828
+      ],
+      "paired_deltas": [
+        0.00018873037916400381,
+        -0.003326216451130626,
+        0.014461129985652632,
+        -0.00481235641445088,
+        0.0067233632760825834
+      ],
+      "worse_seeds": 3,
+      "better_seeds": 2,
+      "tied_seeds": 0,
+      "all_feasible": true,
+      "raw_p_one_sided": 0.28125,
+      "holm_p_one_sided": 1.0
+    },
+    {
+      "ablation": "incremental_eval",
+      "label": "Full replay (efficiency)",
+      "n": 5,
+      "seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "objective_mean": 0.7443483291787765,
+      "objective_sd": 0.003392255079096083,
+      "paired_delta_mean": 0.0,
+      "paired_delta_sd": 0.0,
+      "paired_delta_ci95": [
+        0.0,
+        0.0
+      ],
+      "paired_deltas": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "worse_seeds": 0,
+      "better_seeds": 0,
+      "tied_seeds": 5,
+      "all_feasible": true,
+      "raw_p_one_sided": 1.0,
+      "holm_p_one_sided": 1.0
+    }
+  ],
+  "runs": [
+    {
+      "run_id": "formal-ablation-s42-m0-r3",
+      "run_dir": "results/runs/formal-ablation-s42-m0-r3"
+    },
+    {
+      "run_id": "formal-ablation-s42-m1-r3",
+      "run_dir": "results/runs/formal-ablation-s42-m1-r3"
+    },
+    {
+      "run_id": "formal-ablation-s42-m2-r3",
+      "run_dir": "results/runs/formal-ablation-s42-m2-r3"
+    },
+    {
+      "run_id": "formal-ablation-s42-m3-r3",
+      "run_dir": "results/runs/formal-ablation-s42-m3-r3"
+    },
+    {
+      "run_id": "formal-ablation-s42-m4-r3",
+      "run_dir": "results/runs/formal-ablation-s42-m4-r3"
+    }
+  ]
+}

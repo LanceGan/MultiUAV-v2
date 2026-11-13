@@ -1,0 +1,12 @@
+{
+  "figures": {
+    "stc_rq5_ablation_s42.png": {
+      "bytes": 309163,
+      "sha256": "9b62d042ccf1aa0dff71dd287712a42ca3bd8786584f5e4c7396813ddba57b08"
+    }
+  },
+  "n_figures": 1,
+  "provenance_sha256": "2ca723ee669199f80f2e385bd462608cf7552bbec49aaa89f0832d0613a53aca",
+  "statistics_sha256": "e6e161067253b3b54ef2a629b93c311f903e8119e39d761f25e7104841bb73a3",
+  "statistics_csv_sha256": "166b585c1096b894a9669e16e8f1c67f1d5cfebd68816d96f8496ec4dbf019d9"
+}

@@ -1,0 +1,31 @@
+{
+  "figure": "stc_exact_k4_k8.png",
+  "runs": [
+    {
+      "run_id": "formal-exact-k4-s42",
+      "manifest": "results/runs/formal-exact-k4-s42/manifest.json",
+      "manifest_sha256": "591625af2d5f6b7f9c5eb7ba077e50e9124281e14f4ff0488eff4249591eeb46",
+      "records": "results/runs/formal-exact-k4-s42/records.json",
+      "records_sha256": "5975d93f73d5d1334d52dad367ee64e9290c3bc162e5f74e29edd7090ab24070"
+    },
+    {
+      "run_id": "formal-exact-k6-s42",
+      "manifest": "results/runs/formal-exact-k6-s42/manifest.json",
+      "manifest_sha256": "27d8b5d639c6696f998876aef9b9aba43624ca884772e595fb080b07cd624bf4",
+      "records": "results/runs/formal-exact-k6-s42/records.json",
+      "records_sha256": "d391a990420fd852ce3f59a821338c947f53eb7c0b40ed73cacf1b9dff863447"
+    },
+    {
+      "run_id": "formal-exact-k8-s42",
+      "manifest": "results/runs/formal-exact-k8-s42/manifest.json",
+      "manifest_sha256": "5533de460a2ff1cec4ae6eac415f8f72b798cd13de9d666e4781bd3e58a93166",
+      "records": "results/runs/formal-exact-k8-s42/records.json",
+      "records_sha256": "2d071fe2edb498c66f3924b6aac30bef3736001c2c4100b5beace714a6448b54"
+    }
+  ],
+  "statistics_file": "stc_exact_k4_k8.statistics.json",
+  "statistics_sha256": "baa771cb03898dbc0dac3b2401dbf90619bfe7b5dbb3efecfdef3b350a0f9218",
+  "statistics_csv_file": "stc_exact_k4_k8.statistics.csv",
+  "statistics_csv_sha256": "5b12e9397ee38977c8ee9a393ae82d5d944baee66fdcf850f165e884f913677e",
+  "optimality_scope": "optimal only within the declared discrete candidate space"
+}

@@ -1,0 +1,12 @@
+episode,feasible,makespan_s,total_delay_s,outage_uav0_s,outage_uav1_s,failure_reasons
+1,True,387.0,321.5,15.0,18.5,
+10,False,505.0,347.5,16.0,31.5,contiguous_outage_excess
+20,False,1000.0,527.5,15.0,136.0,unserved_tasks;unfinished_uploads;terminal_not_reached;contiguous_outage_excess
+30,False,556.0,405.0,20.5,41.5,contiguous_outage_excess
+40,False,577.0,389.0,15.0,31.5,contiguous_outage_excess
+50,True,485.5,329.0,15.0,19.0,
+60,True,670.5,498.0,15.0,20.0,
+70,False,776.0,387.0,15.0,26.0,contiguous_outage_excess
+80,True,396.5,326.5,15.0,18.5,
+90,True,386.5,321.5,15.0,18.5,
+100,False,386.5,324.5,15.0,18.5,early_service_arrival

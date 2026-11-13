@@ -1,0 +1,4 @@
+run_id,n_tasks,exact_feasible,exact_objective,exact_runtime_s,exact_proven_optimal,exact_discrete_search_complete,exact_timed_out,exact_state,exact_explored,exact_gap,proposed_feasible,proposed_objective,proposed_makespan_s,proposed_total_delay_s,proposed_runtime_s,proposed_iterations,proposed_iterations_executed
+formal-exact-k4-s42,4,False,,16.595035791397095,False,True,False,no feasible,120,,False,,155.0,81.5,284.82164183305576,1000,1000
+formal-exact-k6-s42,6,False,,1013.1043820381165,False,True,False,no feasible,5040,,False,,182.0,77.0,599.6384697081521,1000,1000
+formal-exact-k8-s42,8,False,,21600.27480506897,False,False,True,timeout,318597,,False,,255.0,131.5,906.2104815000203,1000,1000

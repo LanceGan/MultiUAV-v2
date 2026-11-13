@@ -1,0 +1,116 @@
+[
+  {
+    "episode": 1,
+    "metrics": {
+      "feasible": false,
+      "failure_reasons": [
+        "unserved_tasks",
+        "unfinished_uploads",
+        "terminal_not_reached"
+      ],
+      "makespan_s": 10.0,
+      "total_delay_s": 0.0,
+      "delay_count": 0,
+      "visited_tasks": 0,
+      "uploaded_tasks": 0,
+      "unserved_tasks": 20,
+      "unfinished_uploads": 20,
+      "outage_ratio": [
+        0.9997524888313116,
+        0.012014854563640324
+      ],
+      "max_outage_ratio": 0.9997524888313116,
+      "total_expected_outage_s": [
+        9.997524888313116,
+        0.12014854563640323
+      ],
+      "max_contiguous_outage_s": [
+        10.0,
+        0.0
+      ],
+      "outage_max_s": 20.0,
+      "outage_probability_threshold": 0.5,
+      "early_service_arrivals": 0,
+      "early_terminal_arrivals": 0,
+      "collisions": 0,
+      "out_of_bounds": 0,
+      "sector_conflicts": 0,
+      "terminal_distances_m": [
+        1608.2719325414414,
+        1579.0355388725477
+      ],
+      "completion_step": [
+        -1,
+        -1
+      ],
+      "max_stall_steps": [
+        0,
+        0
+      ],
+      "energy_j": [
+        2403.8537347064257,
+        2381.6440137409395
+      ],
+      "reward_term_totals": {
+        "time": [
+          -2.0000000000000004,
+          -2.0000000000000004
+        ],
+        "progress": [
+          1.9569663056145579,
+          1.9479558877858294
+        ],
+        "guide_alignment": [
+          0.9986148181657739,
+          0.9991661096794436
+        ],
+        "boundary": [
+          0.0,
+          0.0
+        ],
+        "collision": [
+          0.0,
+          0.0
+        ],
+        "upload": [
+          0.0,
+          0.0
+        ],
+        "outage": [
+          -39.99009955325246,
+          -0.4805941825456129
+        ],
+        "service": [
+          0.0,
+          0.0
+        ],
+        "terminal": [
+          0.0,
+          0.0
+        ],
+        "early_arrival": [
+          0.0,
+          0.0
+        ],
+        "invalid_stall": [
+          0.0,
+          0.0
+        ],
+        "energy": [
+          -0.024038537347064258,
+          -0.023816440137409394
+        ]
+      },
+      "steps": 20,
+      "return": -38.61584559203694,
+      "remaining_distance_m": 646.6601591788922
+    },
+    "score": [
+      0,
+      0,
+      0,
+      -646.6601591788922,
+      -38.61584559203694
+    ]
+  }
+]

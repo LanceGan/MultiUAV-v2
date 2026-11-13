@@ -1,0 +1,240 @@
+{
+  "run_id": "smoke-v2-maddpg-e1-s20",
+  "algorithm": "MADDPG",
+  "scenario_label": "s42",
+  "uav_num": 2,
+  "episodes": 1,
+  "horizon_steps": 20,
+  "elapsed_s": 0.21360716712661088,
+  "mapguide_probability": 1.0,
+  "mapguide_min_probability": 1.0,
+  "guided_episodes": 1,
+  "best_metrics": {
+    "feasible": false,
+    "failure_reasons": [
+      "unserved_tasks",
+      "unfinished_uploads",
+      "terminal_not_reached",
+      "outage_excess"
+    ],
+    "makespan_s": 10.0,
+    "total_delay_s": 0.0,
+    "delay_count": 0,
+    "visited_tasks": 0,
+    "uploaded_tasks": 0,
+    "unserved_tasks": 20,
+    "unfinished_uploads": 20,
+    "outage_ratio": [
+      0.9980195399194652,
+      0.02403391056827376
+    ],
+    "max_outage_ratio": 0.9980195399194652,
+    "early_service_arrivals": 0,
+    "early_terminal_arrivals": 0,
+    "collisions": 0,
+    "out_of_bounds": 0,
+    "sector_conflicts": 0,
+    "terminal_distances_m": [
+      2055.326086551872,
+      1996.5451062079478
+    ],
+    "completion_step": [
+      -1,
+      -1
+    ],
+    "max_stall_steps": [
+      0,
+      0
+    ],
+    "energy_j": [
+      2201.6443094296487,
+      2215.82454751883
+    ],
+    "reward_term_totals": {
+      "time": [
+        -2.0000000000000004,
+        -2.0000000000000004
+      ],
+      "progress": [
+        -1.6177257868412889,
+        -1.1931009972532842
+      ],
+      "guide_alignment": [
+        -0.8657866770705244,
+        -0.6358535516031519
+      ],
+      "boundary": [
+        0.0,
+        0.0
+      ],
+      "collision": [
+        0.0,
+        0.0
+      ],
+      "upload": [
+        0.0,
+        0.0
+      ],
+      "outage": [
+        -39.92078159677861,
+        -0.9613564227309505
+      ],
+      "service": [
+        0.0,
+        0.0
+      ],
+      "terminal": [
+        0.0,
+        0.0
+      ],
+      "early_arrival": [
+        0.0,
+        0.0
+      ],
+      "invalid_stall": [
+        0.0,
+        0.0
+      ],
+      "energy": [
+        -0.02201644309429649,
+        -0.022158245475188302
+      ]
+    },
+    "steps": 20,
+    "return": -49.2387797208473,
+    "remaining_distance_m": 1486.128781365762
+  },
+  "evaluations": [
+    {
+      "episode": 1,
+      "metrics": {
+        "feasible": false,
+        "failure_reasons": [
+          "unserved_tasks",
+          "unfinished_uploads",
+          "terminal_not_reached",
+          "outage_excess"
+        ],
+        "makespan_s": 10.0,
+        "total_delay_s": 0.0,
+        "delay_count": 0,
+        "visited_tasks": 0,
+        "uploaded_tasks": 0,
+        "unserved_tasks": 20,
+        "unfinished_uploads": 20,
+        "outage_ratio": [
+          0.9980195399194652,
+          0.02403391056827376
+        ],
+        "max_outage_ratio": 0.9980195399194652,
+        "early_service_arrivals": 0,
+        "early_terminal_arrivals": 0,
+        "collisions": 0,
+        "out_of_bounds": 0,
+        "sector_conflicts": 0,
+        "terminal_distances_m": [
+          2055.326086551872,
+          1996.5451062079478
+        ],
+        "completion_step": [
+          -1,
+          -1
+        ],
+        "max_stall_steps": [
+          0,
+          0
+        ],
+        "energy_j": [
+          2201.6443094296487,
+          2215.82454751883
+        ],
+        "reward_term_totals": {
+          "time": [
+            -2.0000000000000004,
+            -2.0000000000000004
+          ],
+          "progress": [
+            -1.6177257868412889,
+            -1.1931009972532842
+          ],
+          "guide_alignment": [
+            -0.8657866770705244,
+            -0.6358535516031519
+          ],
+          "boundary": [
+            0.0,
+            0.0
+          ],
+          "collision": [
+            0.0,
+            0.0
+          ],
+          "upload": [
+            0.0,
+            0.0
+          ],
+          "outage": [
+            -39.92078159677861,
+            -0.9613564227309505
+          ],
+          "service": [
+            0.0,
+            0.0
+          ],
+          "terminal": [
+            0.0,
+            0.0
+          ],
+          "early_arrival": [
+            0.0,
+            0.0
+          ],
+          "invalid_stall": [
+            0.0,
+            0.0
+          ],
+          "energy": [
+            -0.02201644309429649,
+            -0.022158245475188302
+          ]
+        },
+        "steps": 20,
+        "return": -49.2387797208473,
+        "remaining_distance_m": 1486.128781365762
+      },
+      "score": [
+        0,
+        0,
+        0,
+        -1486.128781365762,
+        -49.2387797208473
+      ]
+    }
+  ],
+  "routes": {
+    "0": [
+      0,
+      4,
+      6,
+      15,
+      9,
+      5,
+      3,
+      19,
+      12,
+      18
+    ],
+    "1": [
+      2,
+      13,
+      1,
+      14,
+      11,
+      7,
+      17,
+      10,
+      8,
+      16
+    ]
+  }
+}

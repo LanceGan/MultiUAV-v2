@@ -1,0 +1,120 @@
+{
+  "source_run": "/Users/ganruijie.1/grj/MultiUAV-v2/results/runs_ma_d3qn_recheck_v1/ma-d3qn-recheck-v1-u2-s42-e100-s2000",
+  "checkpoint_sha256": "7bf52305a9583bf68d8e756d0abf339da08614e5a4d795e968792ebd2a07a1cb",
+  "summary_sha256": "357d20adbb35ac2caea9e4127b4ee2ba34d5bd7c695444f2f680ad3fdbc868c4",
+  "routes_json": "/Users/ganruijie.1/grj/MultiUAV-v2/configs/exclusive/u2_s42_4d_ga_routes.json",
+  "replay_device": "mps",
+  "metrics": {
+    "feasible": true,
+    "failure_reasons": [],
+    "makespan_s": 386.5,
+    "total_delay_s": 321.5,
+    "delay_count": 20,
+    "visited_tasks": 20,
+    "uploaded_tasks": 20,
+    "unserved_tasks": 0,
+    "unfinished_uploads": 0,
+    "outage_ratio": [
+      0.24248395294618713,
+      0.2766913713548485
+    ],
+    "max_outage_ratio": 0.2766913713548485,
+    "total_expected_outage_s": [
+      64.1370055542665,
+      106.94121502864894
+    ],
+    "max_contiguous_outage_s": [
+      15.0,
+      18.5
+    ],
+    "outage_max_s": 20.0,
+    "outage_probability_threshold": 0.5,
+    "early_service_arrivals": 0,
+    "early_terminal_arrivals": 0,
+    "collisions": 0,
+    "out_of_bounds": 0,
+    "sector_conflicts": 0,
+    "safety_projections": 574,
+    "upload_guard_projections": 40,
+    "terminal_distances_m": [
+      0.999999393452193,
+      1.00000025558594
+    ],
+    "completion_step": [
+      529,
+      773
+    ],
+    "max_stall_steps": [
+      9,
+      0
+    ],
+    "energy_j": [
+      290149.54885030416,
+      492355.8902052976
+    ],
+    "reward_term_totals": {
+      "time": [
+        -0.5290000000000004,
+        -0.7730000000000006
+      ],
+      "progress": [
+        0.8399115157507618,
+        1.5369468727407092
+      ],
+      "guide_alignment": [
+        0.221790366812749,
+        0.3863535533828664
+      ],
+      "boundary": [
+        0.0,
+        0.0
+      ],
+      "collision": [
+        0.0,
+        0.0
+      ],
+      "upload": [
+        0.29901116896223606,
+        0.35252694202406987
+      ],
+      "outage": [
+        -2.5654802221706654,
+        -4.2776486011459545
+      ],
+      "service": [
+        10.0,
+        10.0
+      ],
+      "terminal": [
+        10.0,
+        10.0
+      ],
+      "early_arrival": [
+        0.0,
+        0.0
+      ],
+      "invalid_stall": [
+        0.0,
+        0.0
+      ],
+      "qos_risk": [
+        0.0,
+        0.0
+      ],
+      "qos": [
+        0.0,
+        0.0
+      ],
+      "energy": [
+        -0.029014954885030777,
+        -0.04923558902052958
+      ]
+    },
+    "steps": 773
+  },
+  "evaluation_definition": "deterministic policy, MapGuide disabled, safety and upload guards enabled",
+  "source_data": [
+    "trajectory.csv",
+    "evaluations.csv"
+  ]
+}

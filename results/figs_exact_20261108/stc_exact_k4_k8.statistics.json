@@ -1,0 +1,71 @@
+{
+  "n_task_counts": 3,
+  "task_counts": [
+    4,
+    6,
+    8
+  ],
+  "rows": [
+    {
+      "run_id": "formal-exact-k4-s42",
+      "n_tasks": 4,
+      "exact_feasible": false,
+      "exact_objective": null,
+      "exact_runtime_s": 16.595035791397095,
+      "exact_proven_optimal": false,
+      "exact_discrete_search_complete": true,
+      "exact_timed_out": false,
+      "exact_state": "no feasible",
+      "exact_explored": 120,
+      "exact_gap": null,
+      "proposed_feasible": false,
+      "proposed_objective": null,
+      "proposed_makespan_s": 155.0,
+      "proposed_total_delay_s": 81.5,
+      "proposed_runtime_s": 284.82164183305576,
+      "proposed_iterations": 1000,
+      "proposed_iterations_executed": 1000
+    },
+    {
+      "run_id": "formal-exact-k6-s42",
+      "n_tasks": 6,
+      "exact_feasible": false,
+      "exact_objective": null,
+      "exact_runtime_s": 1013.1043820381165,
+      "exact_proven_optimal": false,
+      "exact_discrete_search_complete": true,
+      "exact_timed_out": false,
+      "exact_state": "no feasible",
+      "exact_explored": 5040,
+      "exact_gap": null,
+      "proposed_feasible": false,
+      "proposed_objective": null,
+      "proposed_makespan_s": 182.0,
+      "proposed_total_delay_s": 77.0,
+      "proposed_runtime_s": 599.6384697081521,
+      "proposed_iterations": 1000,
+      "proposed_iterations_executed": 1000
+    },
+    {
+      "run_id": "formal-exact-k8-s42",
+      "n_tasks": 8,
+      "exact_feasible": false,
+      "exact_objective": null,
+      "exact_runtime_s": 21600.27480506897,
+      "exact_proven_optimal": false,
+      "exact_discrete_search_complete": false,
+      "exact_timed_out": true,
+      "exact_state": "timeout",
+      "exact_explored": 318597,
+      "exact_gap": null,
+      "proposed_feasible": false,
+      "proposed_objective": null,
+      "proposed_makespan_s": 255.0,
+      "proposed_total_delay_s": 131.5,
+      "proposed_runtime_s": 906.2104815000203,
+      "proposed_iterations": 1000,
+      "proposed_iterations_executed": 1000
+    }
+  ],
+  "optimality_scope": "optimal only within the declared discrete candidate space"
+}

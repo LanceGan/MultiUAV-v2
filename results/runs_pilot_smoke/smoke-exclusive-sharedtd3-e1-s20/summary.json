@@ -1,0 +1,129 @@
+{
+  "run_id": "smoke-exclusive-sharedtd3-e1-s20",
+  "algorithm": "SharedTD3",
+  "scenario_label": "s42",
+  "uav_num": 2,
+  "episodes": 1,
+  "horizon_steps": 20,
+  "elapsed_s": 0.2643546669278294,
+  "best_metrics": {
+    "feasible": false,
+    "failure_reasons": [
+      "unserved_tasks",
+      "unfinished_uploads",
+      "terminal_not_reached",
+      "outage_excess"
+    ],
+    "makespan_s": 10.0,
+    "total_delay_s": 0.0,
+    "delay_count": 0,
+    "visited_tasks": 0,
+    "uploaded_tasks": 0,
+    "unserved_tasks": 20,
+    "unfinished_uploads": 20,
+    "outage_ratio": [
+      0.9983150551329218,
+      0.02363308475097408
+    ],
+    "max_outage_ratio": 0.9983150551329218,
+    "early_service_arrivals": 0,
+    "early_terminal_arrivals": 0,
+    "collisions": 0,
+    "out_of_bounds": 0,
+    "sector_conflicts": 0,
+    "terminal_distances_m": [
+      2032.7185762074978,
+      1984.661423020431
+    ],
+    "completion_step": [
+      -1,
+      -1
+    ],
+    "energy_j": [
+      2129.438903575951,
+      2112.6831979323224
+    ],
+    "steps": 20,
+    "return": -44.92034681637092,
+    "remaining_distance_m": 1450.838980684361
+  },
+  "evaluations": [
+    {
+      "episode": 1,
+      "metrics": {
+        "feasible": false,
+        "failure_reasons": [
+          "unserved_tasks",
+          "unfinished_uploads",
+          "terminal_not_reached",
+          "outage_excess"
+        ],
+        "makespan_s": 10.0,
+        "total_delay_s": 0.0,
+        "delay_count": 0,
+        "visited_tasks": 0,
+        "uploaded_tasks": 0,
+        "unserved_tasks": 20,
+        "unfinished_uploads": 20,
+        "outage_ratio": [
+          0.9983150551329218,
+          0.02363308475097408
+        ],
+        "max_outage_ratio": 0.9983150551329218,
+        "early_service_arrivals": 0,
+        "early_terminal_arrivals": 0,
+        "collisions": 0,
+        "out_of_bounds": 0,
+        "sector_conflicts": 0,
+        "terminal_distances_m": [
+          2032.7185762074978,
+          1984.661423020431
+        ],
+        "completion_step": [
+          -1,
+          -1
+        ],
+        "energy_j": [
+          2129.438903575951,
+          2112.6831979323224
+        ],
+        "steps": 20,
+        "return": -44.92034681637092,
+        "remaining_distance_m": 1450.838980684361
+      },
+      "score": [
+        0,
+        0,
+        0,
+        -1450.838980684361,
+        -44.92034681637092
+      ]
+    }
+  ],
+  "routes": {
+    "0": [
+      0,
+      4,
+      6,
+      15,
+      9,
+      5,
+      3,
+      19,
+      12,
+      18
+    ],
+    "1": [
+      2,
+      13,
+      1,
+      14,
+      11,
+      7,
+      17,
+      10,
+      8,
+      16
+    ]
+  }
+}

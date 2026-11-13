@@ -1,0 +1,862 @@
+[
+  {
+    "episode": 1,
+    "metrics": {
+      "feasible": true,
+      "failure_reasons": [],
+      "makespan_s": 618.5,
+      "total_delay_s": 286.0,
+      "delay_count": 20,
+      "visited_tasks": 20,
+      "uploaded_tasks": 20,
+      "unserved_tasks": 0,
+      "unfinished_uploads": 0,
+      "outage_ratio": [
+        0.22111722558759606,
+        0.2117631169873836
+      ],
+      "max_outage_ratio": 0.22111722558759606,
+      "total_expected_outage_s": [
+        81.81337346741054,
+        130.97548785669676
+      ],
+      "max_contiguous_outage_s": [
+        17.5,
+        20.0
+      ],
+      "outage_max_s": 20.0,
+      "outage_probability_threshold": 0.5,
+      "early_service_arrivals": 0,
+      "early_terminal_arrivals": 0,
+      "collisions": 0,
+      "out_of_bounds": 0,
+      "sector_conflicts": 0,
+      "safety_projections": 599,
+      "terminal_distances_m": [
+        7.686701124758565,
+        0.9999994034299758
+      ],
+      "completion_step": [
+        740,
+        1237
+      ],
+      "max_stall_steps": [
+        0,
+        0
+      ],
+      "energy_j": [
+        187643.29773417336,
+        363327.3821755006
+      ],
+      "reward_term_totals": {
+        "time": [
+          -0.7400000000000005,
+          -1.2369999999999746
+        ],
+        "progress": [
+          0.8359715244672627,
+          1.535112328135182
+        ],
+        "guide_alignment": [
+          0.3268142028030687,
+          0.5663244510295027
+        ],
+        "boundary": [
+          0.0,
+          0.0
+        ],
+        "collision": [
+          0.0,
+          0.0
+        ],
+        "upload": [
+          0.2990111689622355,
+          0.35252694202407037
+        ],
+        "outage": [
+          -3.2725349386964244,
+          -5.2390195142678895
+        ],
+        "service": [
+          10.0,
+          10.0
+        ],
+        "terminal": [
+          10.0,
+          10.0
+        ],
+        "early_arrival": [
+          0.0,
+          0.0
+        ],
+        "invalid_stall": [
+          0.0,
+          0.0
+        ],
+        "qos_risk": [
+          0.0,
+          0.0
+        ],
+        "qos": [
+          0.0,
+          0.0
+        ],
+        "energy": [
+          -0.01876432977341746,
+          -0.03633273821755025
+        ]
+      },
+      "steps": 1237,
+      "return": 33.37210909646605,
+      "remaining_distance_m": 0.0
+    },
+    "score": [
+      1,
+      0,
+      -0.0,
+      -20.0,
+      -37.5,
+      0,
+      0,
+      0,
+      0,
+      20,
+      20,
+      -0.0,
+      33.37210909646605
+    ],
+    "completion_score": [
+      1,
+      20,
+      20,
+      0,
+      0,
+      -0.0,
+      -20.0,
+      0,
+      0,
+      0,
+      -0.0,
+      33.37210909646605
+    ]
+  },
+  {
+    "episode": 10,
+    "metrics": {
+      "feasible": false,
+      "failure_reasons": [
+        "early_service_arrival",
+        "contiguous_outage_excess"
+      ],
+      "makespan_s": 638.0,
+      "total_delay_s": 360.5,
+      "delay_count": 20,
+      "visited_tasks": 20,
+      "uploaded_tasks": 20,
+      "unserved_tasks": 0,
+      "unfinished_uploads": 0,
+      "outage_ratio": [
+        0.2046784507460005,
+        0.17923465231721533
+      ],
+      "max_outage_ratio": 0.2046784507460005,
+      "total_expected_outage_s": [
+        81.8713802984002,
+        114.35170817838339
+      ],
+      "max_contiguous_outage_s": [
+        29.0,
+        25.5
+      ],
+      "outage_max_s": 20.0,
+      "outage_probability_threshold": 0.5,
+      "early_service_arrivals": 3,
+      "early_terminal_arrivals": 0,
+      "collisions": 0,
+      "out_of_bounds": 0,
+      "sector_conflicts": 0,
+      "safety_projections": 541,
+      "terminal_distances_m": [
+        3.362788065781121,
+        1.0000007030109026
+      ],
+      "completion_step": [
+        800,
+        1276
+      ],
+      "max_stall_steps": [
+        0,
+        0
+      ],
+      "energy_j": [
+        187396.19853855137,
+        347807.4725053989
+      ],
+      "reward_term_totals": {
+        "time": [
+          -0.8000000000000006,
+          -1.2759999999999703
+        ],
+        "progress": [
+          0.8379977294273004,
+          1.534743826606599
+        ],
+        "guide_alignment": [
+          0.346126245322128,
+          0.5860302512298023
+        ],
+        "boundary": [
+          0.0,
+          0.0
+        ],
+        "collision": [
+          0.0,
+          0.0
+        ],
+        "upload": [
+          0.2990111689622358,
+          0.35252694202406987
+        ],
+        "outage": [
+          -3.274855211936012,
+          -4.574068327135338
+        ],
+        "service": [
+          10.0,
+          10.0
+        ],
+        "terminal": [
+          10.0,
+          10.0
+        ],
+        "early_arrival": [
+          -3.0,
+          0.0
+        ],
+        "invalid_stall": [
+          0.0,
+          0.0
+        ],
+        "qos_risk": [
+          0.0,
+          0.0
+        ],
+        "qos": [
+          -10.0,
+          -10.0
+        ],
+        "energy": [
+          -0.01873961985385526,
+          -0.034780747250540006
+        ]
+      },
+      "steps": 1276,
+      "return": 10.977992257396398,
+      "remaining_distance_m": 0.0
+    },
+    "score": [
+      0,
+      -2,
+      -14.5,
+      -29.0,
+      -54.5,
+      0,
+      0,
+      -3,
+      0,
+      20,
+      20,
+      -0.0,
+      10.977992257396398
+    ],
+    "completion_score": [
+      0,
+      20,
+      20,
+      0,
+      -2,
+      -14.5,
+      -29.0,
+      0,
+      0,
+      -3,
+      -0.0,
+      10.977992257396398
+    ]
+  },
+  {
+    "episode": 20,
+    "metrics": {
+      "feasible": false,
+      "failure_reasons": [
+        "contiguous_outage_excess"
+      ],
+      "makespan_s": 650.0,
+      "total_delay_s": 363.5,
+      "delay_count": 20,
+      "visited_tasks": 20,
+      "uploaded_tasks": 20,
+      "unserved_tasks": 0,
+      "unfinished_uploads": 0,
+      "outage_ratio": [
+        0.2230515436789743,
+        0.1749112806966219
+      ],
+      "max_outage_ratio": 0.2230515436789743,
+      "total_expected_outage_s": [
+        91.116555592861,
+        113.69233245280424
+      ],
+      "max_contiguous_outage_s": [
+        31.5,
+        22.5
+      ],
+      "outage_max_s": 20.0,
+      "outage_probability_threshold": 0.5,
+      "early_service_arrivals": 0,
+      "early_terminal_arrivals": 0,
+      "collisions": 0,
+      "out_of_bounds": 0,
+      "sector_conflicts": 0,
+      "safety_projections": 579,
+      "terminal_distances_m": [
+        1.0000005407387211,
+        1.0000008429601397
+      ],
+      "completion_step": [
+        817,
+        1300
+      ],
+      "max_stall_steps": [
+        0,
+        0
+      ],
+      "energy_j": [
+        207254.41502637608,
+        352653.5571090703
+      ],
+      "reward_term_totals": {
+        "time": [
+          -0.8170000000000006,
+          -1.2999999999999676
+        ],
+        "progress": [
+          0.8365490443170516,
+          1.5341944046030793
+        ],
+        "guide_alignment": [
+          0.3228994509468813,
+          0.5853855742908046
+        ],
+        "boundary": [
+          0.0,
+          0.0
+        ],
+        "collision": [
+          0.0,
+          0.0
+        ],
+        "upload": [
+          0.29901116896223573,
+          0.35252694202407003
+        ],
+        "outage": [
+          -3.644662223714442,
+          -4.547693298112169
+        ],
+        "service": [
+          10.0,
+          10.0
+        ],
+        "terminal": [
+          10.0,
+          10.0
+        ],
+        "early_arrival": [
+          0.0,
+          0.0
+        ],
+        "invalid_stall": [
+          0.0,
+          0.0
+        ],
+        "qos_risk": [
+          0.0,
+          0.0
+        ],
+        "qos": [
+          -10.0,
+          -10.0
+        ],
+        "energy": [
+          -0.02072544150263775,
+          -0.035265355710907116
+        ]
+      },
+      "steps": 1300,
+      "return": 13.565220266103974,
+      "remaining_distance_m": 0.0
+    },
+    "score": [
+      0,
+      -2,
+      -14.0,
+      -31.5,
+      -54.0,
+      0,
+      0,
+      0,
+      0,
+      20,
+      20,
+      -0.0,
+      13.565220266103974
+    ],
+    "completion_score": [
+      0,
+      20,
+      20,
+      0,
+      -2,
+      -14.0,
+      -31.5,
+      0,
+      0,
+      0,
+      -0.0,
+      13.565220266103974
+    ]
+  },
+  {
+    "episode": 30,
+    "metrics": {
+      "feasible": false,
+      "failure_reasons": [
+        "contiguous_outage_excess"
+      ],
+      "makespan_s": 656.0,
+      "total_delay_s": 409.5,
+      "delay_count": 20,
+      "visited_tasks": 20,
+      "uploaded_tasks": 20,
+      "unserved_tasks": 0,
+      "unfinished_uploads": 0,
+      "outage_ratio": [
+        0.19854544068377988,
+        0.1875107966136944
+      ],
+      "max_outage_ratio": 0.19854544068377988,
+      "total_expected_outage_s": [
+        81.70144884137542,
+        123.00708257858354
+      ],
+      "max_contiguous_outage_s": [
+        29.0,
+        22.5
+      ],
+      "outage_max_s": 20.0,
+      "outage_probability_threshold": 0.5,
+      "early_service_arrivals": 0,
+      "early_terminal_arrivals": 0,
+      "collisions": 0,
+      "out_of_bounds": 0,
+      "sector_conflicts": 0,
+      "safety_projections": 590,
+      "terminal_distances_m": [
+        9.295877014544237,
+        8.307251942911423
+      ],
+      "completion_step": [
+        823,
+        1312
+      ],
+      "max_stall_steps": [
+        0,
+        0
+      ],
+      "energy_j": [
+        194011.6217883154,
+        359611.49272092583
+      ],
+      "reward_term_totals": {
+        "time": [
+          -0.8230000000000006,
+          -1.3119999999999663
+        ],
+        "progress": [
+          0.8383814656087785,
+          1.53603705014853
+        ],
+        "guide_alignment": [
+          0.35121294302496586,
+          0.5793555846559136
+        ],
+        "boundary": [
+          0.0,
+          0.0
+        ],
+        "collision": [
+          0.0,
+          0.0
+        ],
+        "upload": [
+          0.29901116896223545,
+          0.35252694202407003
+        ],
+        "outage": [
+          -3.268057953655018,
+          -4.920283303143331
+        ],
+        "service": [
+          10.0,
+          10.0
+        ],
+        "terminal": [
+          10.0,
+          10.0
+        ],
+        "early_arrival": [
+          0.0,
+          0.0
+        ],
+        "invalid_stall": [
+          0.0,
+          0.0
+        ],
+        "qos_risk": [
+          0.0,
+          0.0
+        ],
+        "qos": [
+          -10.0,
+          -10.0
+        ],
+        "energy": [
+          -0.019401162178831654,
+          -0.03596114927209267
+        ]
+      },
+      "steps": 1312,
+      "return": 13.57782158617523,
+      "remaining_distance_m": 0.0
+    },
+    "score": [
+      0,
+      -2,
+      -11.5,
+      -29.0,
+      -51.5,
+      0,
+      0,
+      0,
+      0,
+      20,
+      20,
+      -0.0,
+      13.57782158617523
+    ],
+    "completion_score": [
+      0,
+      20,
+      20,
+      0,
+      -2,
+      -11.5,
+      -29.0,
+      0,
+      0,
+      0,
+      -0.0,
+      13.57782158617523
+    ]
+  },
+  {
+    "episode": 40,
+    "metrics": {
+      "feasible": false,
+      "failure_reasons": [
+        "unserved_tasks",
+        "unfinished_uploads",
+        "terminal_not_reached",
+        "contiguous_outage_excess"
+      ],
+      "makespan_s": 1000.0,
+      "total_delay_s": 154.0,
+      "delay_count": 4,
+      "visited_tasks": 4,
+      "uploaded_tasks": 4,
+      "unserved_tasks": 16,
+      "unfinished_uploads": 16,
+      "outage_ratio": [
+        0.08034973449607874,
+        0.15885365778853944
+      ],
+      "max_outage_ratio": 0.15885365778853944,
+      "total_expected_outage_s": [
+        80.34973449607874,
+        158.85365778853944
+      ],
+      "max_contiguous_outage_s": [
+        15.5,
+        28.5
+      ],
+      "outage_max_s": 20.0,
+      "outage_probability_threshold": 0.5,
+      "early_service_arrivals": 0,
+      "early_terminal_arrivals": 0,
+      "collisions": 0,
+      "out_of_bounds": 0,
+      "sector_conflicts": 0,
+      "safety_projections": 586,
+      "terminal_distances_m": [
+        1803.1637857217538,
+        3277.523275986047
+      ],
+      "completion_step": [
+        -1,
+        -1
+      ],
+      "max_stall_steps": [
+        0,
+        0
+      ],
+      "energy_j": [
+        264022.3037281828,
+        532419.4190276763
+      ],
+      "reward_term_totals": {
+        "time": [
+          -1.9999999999998905,
+          -1.9999999999998905
+        ],
+        "progress": [
+          -0.003936979642425847,
+          0.7581138067233093
+        ],
+        "guide_alignment": [
+          0.007805021894542331,
+          0.13548343347373867
+        ],
+        "boundary": [
+          0.0,
+          0.0
+        ],
+        "collision": [
+          0.0,
+          0.0
+        ],
+        "upload": [
+          0.0,
+          0.13867763115235582
+        ],
+        "outage": [
+          -3.213989379843154,
+          -6.354146311541568
+        ],
+        "service": [
+          0.0,
+          4.0
+        ],
+        "terminal": [
+          0.0,
+          0.0
+        ],
+        "early_arrival": [
+          0.0,
+          0.0
+        ],
+        "invalid_stall": [
+          0.0,
+          0.0
+        ],
+        "qos_risk": [
+          0.0,
+          0.0
+        ],
+        "qos": [
+          0.0,
+          -10.0
+        ],
+        "energy": [
+          -0.02640223037281834,
+          -0.05324194190276767
+        ]
+      },
+      "steps": 2000,
+      "return": -18.611636950058788,
+      "remaining_distance_m": 478.9041411557089
+    },
+    "score": [
+      0,
+      -1,
+      -8.5,
+      -28.5,
+      -44.0,
+      0,
+      0,
+      0,
+      -2,
+      4,
+      4,
+      -478.9041411557089,
+      -18.611636950058788
+    ],
+    "completion_score": [
+      0,
+      4,
+      4,
+      -2,
+      -1,
+      -8.5,
+      -28.5,
+      0,
+      0,
+      0,
+      -478.9041411557089,
+      -18.611636950058788
+    ]
+  },
+  {
+    "episode": 50,
+    "metrics": {
+      "feasible": false,
+      "failure_reasons": [
+        "contiguous_outage_excess"
+      ],
+      "makespan_s": 655.5,
+      "total_delay_s": 302.0,
+      "delay_count": 20,
+      "visited_tasks": 20,
+      "uploaded_tasks": 20,
+      "unserved_tasks": 0,
+      "unfinished_uploads": 0,
+      "outage_ratio": [
+        0.23295691552916986,
+        0.19007472843049739
+      ],
+      "max_outage_ratio": 0.23295691552916986,
+      "total_expected_outage_s": [
+        82.11731272403237,
+        124.59398448619103
+      ],
+      "max_contiguous_outage_s": [
+        30.0,
+        25.5
+      ],
+      "outage_max_s": 20.0,
+      "outage_probability_threshold": 0.5,
+      "early_service_arrivals": 0,
+      "early_terminal_arrivals": 0,
+      "collisions": 0,
+      "out_of_bounds": 0,
+      "sector_conflicts": 0,
+      "safety_projections": 562,
+      "terminal_distances_m": [
+        0.9999998140733581,
+        0.9999996191091899
+      ],
+      "completion_step": [
+        705,
+        1311
+      ],
+      "max_stall_steps": [
+        0,
+        0
+      ],
+      "energy_j": [
+        178892.79200701398,
+        359710.66538180446
+      ],
+      "reward_term_totals": {
+        "time": [
+          -0.7050000000000005,
+          -1.3109999999999664
+        ],
+        "progress": [
+          0.8339556604331068,
+          1.5340909268096763
+        ],
+        "guide_alignment": [
+          0.32997549000747317,
+          0.5788377069544051
+        ],
+        "boundary": [
+          0.0,
+          0.0
+        ],
+        "collision": [
+          0.0,
+          0.0
+        ],
+        "upload": [
+          0.2990111689622354,
+          0.35252694202407003
+        ],
+        "outage": [
+          -3.2846925089613017,
+          -4.983759379447641
+        ],
+        "service": [
+          10.0,
+          10.0
+        ],
+        "terminal": [
+          10.0,
+          10.0
+        ],
+        "early_arrival": [
+          0.0,
+          0.0
+        ],
+        "invalid_stall": [
+          0.0,
+          0.0
+        ],
+        "qos_risk": [
+          0.0,
+          0.0
+        ],
+        "qos": [
+          -10.0,
+          -10.0
+        ],
+        "energy": [
+          -0.017889279200701512,
+          -0.035971066538180524
+        ]
+      },
+      "steps": 1311,
+      "return": 13.590085661043153,
+      "remaining_distance_m": 0.0
+    },
+    "score": [
+      0,
+      -2,
+      -15.5,
+      -30.0,
+      -55.5,
+      0,
+      0,
+      0,
+      0,
+      20,
+      20,
+      -0.0,
+      13.590085661043153
+    ],
+    "completion_score": [
+      0,
+      20,
+      20,
+      0,
+      -2,
+      -15.5,
+      -30.0,
+      0,
+      0,
+      0,
+      -0.0,
+      13.590085661043153
+    ]
+  }
+]

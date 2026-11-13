@@ -1,0 +1,10 @@
+{
+  "figures": {
+    "stc_exact_k4_k8.png": {
+      "bytes": 249891,
+      "sha256": "3e906a6150bf0060d81d67ab8e2f43be87665c5ad2c693fc72ca5d5e1c5f1e05"
+    }
+  },
+  "n_figures": 1,
+  "provenance_sha256": "1be35c4e938a17c79e7b28f7c24ec59c9afff9ba7c99fa65e5954ab977429cb1"
+}

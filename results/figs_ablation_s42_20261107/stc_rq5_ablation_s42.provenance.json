@@ -1,0 +1,84 @@
+{
+  "figure": "stc_rq5_ablation_s42.png",
+  "figure_files": [
+    "stc_rq5_ablation_s42.png",
+    "stc_rq5_ablation_s42.pdf",
+    "stc_rq5_ablation_s42.svg"
+  ],
+  "runs": [
+    {
+      "run_id": "formal-ablation-s42-m0-r3",
+      "manifest": "results/runs/formal-ablation-s42-m0-r3/manifest.json",
+      "manifest_sha256": "085e38982a048e29ed5a9cabfc2b5d1a59a4c666def536f15b44f35db3567707",
+      "records": "results/runs/formal-ablation-s42-m0-r3/records.json",
+      "records_sha256": "552e7d7c6391ecd099013739332add2b82368ebabaefe39658225398dec03531"
+    },
+    {
+      "run_id": "formal-ablation-s42-m1-r3",
+      "manifest": "results/runs/formal-ablation-s42-m1-r3/manifest.json",
+      "manifest_sha256": "c5641ea26ac9eb839e994ec98784da337f2ea005359c13ac46bc7ccc9576fce6",
+      "records": "results/runs/formal-ablation-s42-m1-r3/records.json",
+      "records_sha256": "f46682d1da2d9a4fd474b1b1f60a30d80e6a18d406ab2d222db953772c6a1ec5"
+    },
+    {
+      "run_id": "formal-ablation-s42-m2-r3",
+      "manifest": "results/runs/formal-ablation-s42-m2-r3/manifest.json",
+      "manifest_sha256": "d1236a06c24c2963b3a2956a08c07a1460eb7d63831cb27bc4f4bae442d0f7e8",
+      "records": "results/runs/formal-ablation-s42-m2-r3/records.json",
+      "records_sha256": "61637cb3bbc285b78588edaf571e52831117794c36918a4b0f349b97e4dcc294"
+    },
+    {
+      "run_id": "formal-ablation-s42-m3-r3",
+      "manifest": "results/runs/formal-ablation-s42-m3-r3/manifest.json",
+      "manifest_sha256": "43f01c730d7e8ec8c9fc2afc1b74ac27b682092b6be1f3fd05b10f288006eaa1",
+      "records": "results/runs/formal-ablation-s42-m3-r3/records.json",
+      "records_sha256": "16ea07fb60ca2a14dc2262cfa0b8f886876d424bd73196d4d36bb348f757d2ef"
+    },
+    {
+      "run_id": "formal-ablation-s42-m4-r3",
+      "manifest": "results/runs/formal-ablation-s42-m4-r3/manifest.json",
+      "manifest_sha256": "acc0839f4a5562cc69ff7afbc555509772b32c429fe51c50c1349004d0e810cf",
+      "records": "results/runs/formal-ablation-s42-m4-r3/records.json",
+      "records_sha256": "15c687670ec36f26303bdfd608e3e0868bda08107244c8cf551e2f943351ac34"
+    }
+  ],
+  "methods": [
+    {
+      "ablation": "full",
+      "label": "Full STC-ALNS"
+    },
+    {
+      "ablation": "ebtas_init",
+      "label": "w/o EBTAS initialisation"
+    },
+    {
+      "ablation": "multi_candidate",
+      "label": "w/o multi-candidate"
+    },
+    {
+      "ablation": "hotspot_destroy",
+      "label": "w/o hotspot destroy"
+    },
+    {
+      "ablation": "conflict_repair",
+      "label": "w/o conflict-aware repair"
+    },
+    {
+      "ablation": "path_switch",
+      "label": "w/o path switch"
+    },
+    {
+      "ablation": "adaptive_weights",
+      "label": "w/o adaptive weights"
+    },
+    {
+      "ablation": "incremental_eval",
+      "label": "Full replay (efficiency)"
+    }
+  ],
+  "statistics_file": "stc_rq5_ablation_s42.statistics.json",
+  "statistics_sha256": "e6e161067253b3b54ef2a629b93c311f903e8119e39d761f25e7104841bb73a3",
+  "statistics_csv_file": "stc_rq5_ablation_s42.statistics.csv",
+  "statistics_csv_sha256": "166b585c1096b894a9669e16e8f1c67f1d5cfebd68816d96f8496ec4dbf019d9",
+  "core_conclusion": "The paired objective shows which ablation mechanisms contribute; non-positive deltas are reported without relabelling them as gains."
+}

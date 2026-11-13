@@ -1,0 +1,57 @@
+{
+  "figure": "stc_u4_s42_seed0_routes.png",
+  "scenario": {
+    "uav_num": 4,
+    "map_seed": 42,
+    "task_seed": 42,
+    "method_seed": 0
+  },
+  "sources": {
+    "main": {
+      "raw": {
+        "path": "/Users/ganruijie.1/.codex/worktrees/cache-parallel/MultiUAV-v2/results/runs/formal-u4-s42-single-r2/raw_records.json",
+        "sha256": "61f3995897a0f9adbdb316c22eaeb284ff9803cd416932dc60c415653c539efb"
+      },
+      "solutions": {
+        "path": "/Users/ganruijie.1/.codex/worktrees/cache-parallel/MultiUAV-v2/results/runs/formal-u4-s42-single-r2/solutions.json",
+        "sha256": "9795d08ab7032b589ce373437a482a89998631b70d53560d4ec143afa7f61fd5"
+      },
+      "timelines": {
+        "path": "/Users/ganruijie.1/.codex/worktrees/cache-parallel/MultiUAV-v2/results/runs/formal-u4-s42-single-r2/timelines.json",
+        "sha256": "da40d4d0a514883675262fc1847197056207c112833c2eed4a39f69d27346d16"
+      }
+    }
+  },
+  "methods": [
+    {
+      "method": "region_distance_straight",
+      "label": "Region-Distance-Straight",
+      "source": "main"
+    },
+    {
+      "method": "shortest_balanced_graph",
+      "label": "Shortest-Balanced-Graph",
+      "source": "main"
+    },
+    {
+      "method": "jia_ebtas_style",
+      "label": "Jia-EBTAS-style",
+      "source": "main"
+    },
+    {
+      "method": "gatsac_style",
+      "label": "GATSAC-style",
+      "source": "main"
+    },
+    {
+      "method": "library_open_loop",
+      "label": "Library-Open-Loop",
+      "source": "main"
+    },
+    {
+      "method": "proposed_stc_alns",
+      "label": "Proposed STC-ALNS",
+      "source": "main"
+    }
+  ]
+}
