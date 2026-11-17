@@ -132,3 +132,18 @@ single-seed scale probes。固定命令和验收口径见
 
 四个 run 均从零训练，不加载 U=2 checkpoint。建议先并行运行两个 U=3 任务，
 再按完成情况启动对应 U=4 任务，保持最多两个训练进程。
+
+## 11. 2026-11-17 数据缺口同步
+
+Windows 侧查看
+[`docs/data-gaps-20261117.md`](docs/data-gaps-20261117.md)。
+
+重点：
+
+- U=3 两个 TA 方法、U=3 MA-D3QN、U=4 两个 TA 方法均已完成但 rejected，
+  不再重跑；
+- U=2 MA-D3QN 尚未封存正式结果；
+- U=4 MA-D3QN 只完成到 ep2200/3000，缺少完整 run；
+- RQ1 仍缺 MCO-A* 和单段轨迹拼接；
+- RQ2/RQ3 必须先确定使用 MapGuide 还是 MCO-A* 作为固定执行器；
+- RQ4 仍缺统一的 exclusive-sector 完整系统对比表。
